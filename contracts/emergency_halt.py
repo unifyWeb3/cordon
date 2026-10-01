@@ -70,6 +70,7 @@ class Evidence:
 	receipt_ok: bool
 	success: bool
 	receipt_status: str
+	input_selector: str
 	selectors: str
 	repeated_selectors: str
 	value_band: str
@@ -84,6 +85,7 @@ class Evidence:
 			receipt_ok=bool(digest.get("receipt_ok", False)),
 			success=bool(digest.get("success", False)),
 			receipt_status=str(digest.get("receipt_status", "MISSING")),
+			input_selector=str(digest.get("input_selector", "NONE")),
 			selectors=",".join(str(s) for s in digest.get("selectors") or []),
 			repeated_selectors=",".join(str(s) for s in digest.get("repeated_selectors") or []),
 			value_band=str(digest.get("value_band", "UNKNOWN")),
@@ -103,6 +105,7 @@ class Proof:
 	tx_hash: str
 	claim: str
 	evidence_url: str
+	evidence_mode: str
 	submitted_at: str
 
 	# Stage 2 result
@@ -219,15 +222,37 @@ def _as_list(value: object) -> list:
 	return []
 
 
+def _as_int(value: object) -> int | None:
+	"""Best-effort int from a JSON-RPC quantity, decimal string, or real number.
+
+	JSON-RPC encodes quantities as 0x-prefixed hex strings, so `int(x)` alone would silently
+	return UNKNOWN for every real receipt and quietly disable the band.
+	"""
+	if isinstance(value, bool):
+		return None
+	if isinstance(value, int):
+		return value
+	if isinstance(value, float):
+		return int(value)
+	if isinstance(value, str):
+		text = value.strip()
+		if not text:
+			return None
+		try:
+			return int(text, 16) if text[:2].lower() == "0x" else int(text, 10)
+		except ValueError:
+			return None
+	return None
+
+
 def _band_int(value: object, edges: tuple) -> str:
 	"""Bucket a number into a named band.
 
 	This is the anti-equivocation device from the docs' own ``derive_status`` example [A15]:
 	exact counts move between two independent fetches, the band does not.
 	"""
-	try:
-		n = int(value)  # type: ignore[arg-type]
-	except (TypeError, ValueError):
+	n = _as_int(value)
+	if n is None:
 		return "UNKNOWN"
 	for edge, name in edges:
 		if n <= edge:
@@ -266,6 +291,95 @@ def derive_digest(payload: dict) -> dict:
 		"receipt_status": str(receipt.get("status", "MISSING")),
 		"note": str(payload.get("note", ""))[:200],
 	}
+
+
+def derive_digest_from_rpc(receipt: object, tx: object) -> dict:
+	"""Reduce a JSON-RPC receipt+transaction pair to stable fields.
+
+	Same discipline as `derive_digest`: nothing that moves between two independent fetches
+	survives. Dropped on purpose: blockNumber, timestamps, gas, cumulative gas, the raw logs,
+	and the transaction hash itself. Kept: the input selector, event topic counts, the value
+	magnitude band, and the log-count band -- all fixed for a given transaction forever.
+
+	A repeated event topic in one transaction is the drain signature this product is about, so
+	`repeated_topics` is the field the adjudicator leans on hardest.
+	"""
+	missing = {
+		"schema": EVIDENCE_SCHEMA,
+		"tx_found": False,
+		"receipt_ok": False,
+		"success": False,
+		"receipt_status": "NOT_FOUND",
+		"value_band": "UNKNOWN",
+		"log_band": "UNKNOWN",
+		"input_selector": "NONE",
+		"selectors": [],
+		"repeated_selectors": [],
+		"note": "",
+	}
+	if not isinstance(receipt, dict) or not receipt:
+		return missing
+
+	receipt = receipt
+	tx = tx if isinstance(tx, dict) else {}
+
+	status_hex = str(receipt.get("status", "0x0"))
+	try:
+		status_int = int(status_hex, 16)
+	except ValueError:
+		status_int = 0
+
+	logs = receipt.get("logs")
+	logs = logs if isinstance(logs, list) else []
+	topics = []
+	for entry in logs:
+		if not isinstance(entry, dict):
+			continue
+		t = entry.get("topics")
+		if isinstance(t, list) and t:
+			topics.append(str(t[0]))
+	repeated = sorted({t for t in topics if topics.count(t) > 1})
+
+	raw_input = str(tx.get("input") or tx.get("data") or "")
+
+	return {
+		"schema": EVIDENCE_SCHEMA,
+		"tx_found": True,
+		"receipt_ok": True,
+		"success": status_int == 1,
+		"receipt_status": status_hex,
+		"value_band": _band_int(tx.get("value"), _VALUE_BANDS),
+		"log_band": _band_int(len(logs), _LOG_BANDS),
+		"input_selector": raw_input[:10] if len(raw_input) >= 10 else "NONE",
+		"selectors": sorted(set(topics)),
+		"repeated_selectors": repeated,
+		"note": "",
+	}
+
+
+def digest_from_rpc_response(status: int, body: bytes | None) -> dict:
+	"""Decode a JSON-RPC batch response and reduce it. Never raises."""
+	missing = derive_digest_from_rpc(None, None)
+	missing["receipt_status"] = f"HTTP_{status}"
+	if status != 200 or not body:
+		return missing
+	try:
+		parsed = json.loads(body.decode("utf-8"))
+	except (ValueError, UnicodeDecodeError):
+		missing["receipt_status"] = "UNPARSEABLE"
+		return missing
+
+	# A batch reply is a list; a single call is a dict. Accept both.
+	batch = parsed if isinstance(parsed, list) else [parsed]
+	receipt, tx = None, None
+	for item in batch:
+		if not isinstance(item, dict):
+			continue
+		if item.get("id") == 1:
+			receipt = item.get("result")
+		elif item.get("id") == 2:
+			tx = item.get("result")
+	return derive_digest_from_rpc(receipt, tx)
 
 
 def digest_from_response(status: int, body: bytes | None) -> dict:
@@ -327,7 +441,9 @@ def build_prompt(claim: str, digest: dict) -> str:
 		f"- value_magnitude_band: {digest.get('value_band')}",
 		f"- log_count_band: {digest.get('log_band')}",
 		f"- function_selectors_seen: {', '.join(str(s) for s in digest.get('selectors') or []) or 'none'}",
-		f"- selectors_called_more_than_once: {', '.join(str(s) for s in digest.get('repeated_selectors') or []) or 'none'}",
+		f"- function_selector_called: {digest.get('input_selector', 'NONE')}",
+		f"- event_signatures_seen: {', '.join(str(s) for s in digest.get('selectors') or []) or 'none'}",
+		f"- event_signatures_repeated_within_this_tx: {', '.join(str(s) for s in digest.get('repeated_selectors') or []) or 'none'}",
 	]
 	observed = "\n".join(rows)
 	return (
@@ -381,15 +497,29 @@ def _extract_rationale(result: object) -> str:
 class EmergencyHalt(gl.Contract):
 	owner: str
 	evidence_url_template: str
+	evidence_mode: str
+	evidence_rpc_url: str
 	default_freeze_seconds: u256
 	proofs: TreeMap[str, Proof]
 	case_ids: DynArray[str]
 	submit_count: u256
 	freeze_count: u256
 
-	def __init__(self, owner: str, evidence_url_template: str) -> None:
+	def __init__(
+		self,
+		owner: str,
+		evidence_url_template: str,
+		evidence_mode: str = "digest",
+		evidence_rpc_url: str = "",
+	) -> None:
 		self.owner = owner
 		self.evidence_url_template = evidence_url_template
+		# "digest" -> GET a pre-reduced JSON digest (hermetic tests, off-chain stage 1).
+		# "jsonrpc" -> POST the target chain's public RPC directly from inside the nondet
+		#              block. One batched request for receipt + transaction, so there is a
+		#              single fetch rather than two independent ones to equivocate on.
+		self.evidence_mode = evidence_mode
+		self.evidence_rpc_url = evidence_rpc_url
 		self.default_freeze_seconds = u256(MAX_FREEZE_SECONDS)
 		self.submit_count = u256(0)
 		self.freeze_count = u256(0)
@@ -405,6 +535,14 @@ class EmergencyHalt(gl.Contract):
 	def set_evidence_url_template(self, template: str) -> None:
 		self._only_owner()
 		self.evidence_url_template = template
+
+	@gl.public.write
+	def set_evidence_rpc(self, rpc_url: str, mode: str) -> None:
+		self._only_owner()
+		if mode not in ("digest", "jsonrpc"):
+			raise gl.vm.UserError("mode must be digest or jsonrpc")
+		self.evidence_rpc_url = rpc_url
+		self.evidence_mode = mode
 
 	@gl.public.write
 	def set_default_freeze_seconds(self, seconds: u256) -> None:
@@ -458,14 +596,43 @@ class EmergencyHalt(gl.Contract):
 		# cannot safely read contract storage directly.
 		claim_local = claim
 		evidence_url_local = evidence_url
+		tx_hash_local = tx_hash
+		mode_local = self.evidence_mode
+		rpc_url_local = self.evidence_rpc_url
 
 		def leader_fn() -> dict:
 			# The gl.nondet.web call is deliberately inline rather than delegated to a
 			# helper: it must sit lexically inside the function handed to
 			# run_nondet_unsafe, which is both clearer to a reader and what genvm-lint
 			# requires to see. All reduction logic below it is pure and deterministic.
-			res = gl.nondet.web.get(evidence_url_local)
-			digest = digest_from_response(res.status, res.body)
+			if mode_local == "jsonrpc":
+				# Batched so that receipt + transaction cost one request, not two.
+				body = json.dumps(
+					[
+						{
+							"jsonrpc": "2.0",
+							"id": 1,
+							"method": "eth_getTransactionReceipt",
+							"params": [tx_hash_local],
+						},
+						{
+							"jsonrpc": "2.0",
+							"id": 2,
+							"method": "eth_getTransactionByHash",
+							"params": [tx_hash_local],
+						},
+					]
+				)
+				res = gl.nondet.web.request(
+					rpc_url_local,
+					method="POST",
+					body=body,
+					headers={"content-type": "application/json"},
+				)
+				digest = digest_from_rpc_response(res.status, res.body)
+			else:
+				res = gl.nondet.web.get(evidence_url_local)
+				digest = digest_from_response(res.status, res.body)
 
 			prompt = build_prompt(claim_local, digest)
 			raw = gl.nondet.exec_prompt(prompt, response_format="json")
@@ -542,6 +709,7 @@ class EmergencyHalt(gl.Contract):
 			tx_hash=tx_hash,
 			claim=claim,
 			evidence_url=evidence_url,
+			evidence_mode=self.evidence_mode,
 			submitted_at=now,
 			finalized=True,
 			verdict=verdict,

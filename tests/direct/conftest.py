@@ -49,7 +49,7 @@ def _llm_mocks():
     return [
         # exploited: a selector was called more than once, and value is LARGE
         (
-            r"selectors_called_more_than_once: 0x23b872dd",
+            r"event_signatures_repeated_within_this_tx: 0x23b872dd",
             json.dumps(
                 {
                     "verdict": "CONFIRMED_EXPLOIT",
@@ -123,3 +123,16 @@ def submit(contract, vm, case_name: str, case_id: str | None = None):
         URL_FOR[case_name],
     )
     return contract.submit_proof(payload)
+
+
+@pytest.fixture
+def contract_module(direct_deploy):
+	"""The loaded contract module.
+
+	The stage-1 reduction helpers are pure and deterministic, so they can be exercised
+	directly rather than only through a full adjudicate() round trip.
+	"""
+	import sys
+
+	direct_deploy(CONTRACT, owner=OWNER, evidence_url_template="https://evidence.test/{tx_hash}")
+	return sys.modules["_contract_emergency_halt"]
