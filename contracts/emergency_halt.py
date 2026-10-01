@@ -156,12 +156,22 @@ def _as_hex(value: object) -> str:
 
 
 def _iso_now() -> str:
-	"""UTC now, second resolution, matching the shape GLSim and Studio produce."""
+	"""Current chain time from the GenVM message, at second resolution.
+
+	Deliberately NOT `datetime.now()`. Wall-clock time is not something the leader and the
+	validators are guaranteed to share, and any use of it outside a consensus block would make
+	the freeze window depend on which machine ran the contract. `gl.message_raw["datetime"]` is
+	the node-provided transaction time: identical everywhere, and what a test can warp to
+	exercise expiry.
+	"""
+	raw = gl.message_raw.get("datetime")
+	if isinstance(raw, str) and raw:
+		return _strip_us(raw)
 	return datetime.now(timezone.utc).replace(microsecond=0).isoformat().replace("+00:00", "Z")
 
 
 def _iso_shift(iso: str, seconds: int) -> str:
-	base = datetime.fromisoformat(iso.replace("Z", "+00:00")) + timedelta(seconds=seconds)
+	base = _parse_iso(iso) + timedelta(seconds=seconds)
 	return base.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
@@ -170,13 +180,37 @@ def _iso_le(a: str, b: str) -> bool:
 	return _strip_us(a) <= _strip_us(b)
 
 
+def _window_closed(expires_at: str) -> bool:
+	"""True once the freeze window has elapsed.
+
+	Named rather than inlined at each call site because the direction is easy to invert, and
+	an inverted comparison means either a freeze that never lifts or one that lifts instantly.
+	Deliberately inclusive: at the exact expiry second the window is closed, so
+	``expires_at <= now`` is the test -- note the argument order.
+	"""
+	return _iso_le(expires_at, _iso_now())
+
+
 def _strip_us(iso: str) -> str:
-	return iso.split(".", 1)[0] + ("Z" if iso.endswith("Z") else "")
+	"""Drop sub-second precision and normalise to a trailing Z.
+
+	Idempotent on purpose: this is applied to values that have already been through it, and an
+	implementation that unconditionally appended "Z" would turn `...:48Z` into `...:48ZZ`.
+	"""
+	head = iso.split(".", 1)[0]
+	if head.endswith("Z") or "+" in head:
+		return head
+	return head + "Z"
+
+
+def _parse_iso(iso: str) -> datetime:
+	"""ISO-8601 UTC -> aware datetime."""
+	return datetime.fromisoformat(_strip_us(iso).replace("Z", "+00:00"))
 
 
 def _epoch(iso: str) -> int:
 	"""ISO-8601 UTC -> unix seconds, for the `until` argument the EVM target expects."""
-	return int(datetime.fromisoformat(iso.replace("Z", "+00:00")).timestamp())
+	return int(_parse_iso(iso).timestamp())
 
 
 def _as_list(value: object) -> list:
@@ -564,7 +598,7 @@ class EmergencyHalt(gl.Contract):
 			raise gl.vm.UserError("unknown case_id")
 		if not proof.frozen:
 			return False
-		if not _iso_le(_iso_now(), proof.expires_at):
+		if not _window_closed(proof.expires_at):
 			return False
 
 		proof.frozen = False
@@ -584,16 +618,14 @@ class EmergencyHalt(gl.Contract):
 		proof = self.proofs.get(case_id)
 		if proof is None or not proof.frozen:
 			return False
-		return not _iso_le(_iso_now(), proof.expires_at)
+		return not _window_closed(proof.expires_at)
 
 	@gl.public.view
 	def seconds_remaining(self, case_id: str) -> u256:
 		proof = self.proofs.get(case_id)
 		if proof is None or not proof.frozen:
 			return u256(0)
-		now = datetime.fromisoformat(_strip_us(_iso_now()).replace("Z", "+00:00"))
-		until = datetime.fromisoformat(_strip_us(proof.expires_at).replace("Z", "+00:00"))
-		remaining = int((until - now).total_seconds())
+		remaining = int((_parse_iso(proof.expires_at) - _parse_iso(_iso_now())).total_seconds())
 		return u256(remaining if remaining > 0 else 0)
 
 	# ---------------------------------------------------------------- public reads

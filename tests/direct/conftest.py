@@ -95,6 +95,24 @@ def halt(direct_vm, direct_deploy):
     return contract
 
 
+def advance_time(vm, iso: str) -> None:
+	"""Move the chain clock to `iso`.
+
+	`VMContext.warp()` sets `vm._datetime` and refreshes the cached `gl.message`, but it does
+	NOT update `gl.message_raw["datetime"]` -- see `_refresh_gl_message` in
+	gltest/direct/vm.py, which only refreshes sender_address and origin_address. Because
+	`message_raw` is decoded once at contract import time, a contract reading the transaction
+	datetime (which is what a real Intelligent Contract must do) cannot see a bare `warp()`.
+
+	So we do both. This is a harness workaround, not contract behaviour: on a real node the
+	datetime arrives fresh with every transaction.
+	"""
+	import genlayer.gl as _gl
+
+	vm.warp(iso)
+	_gl.message_raw["datetime"] = iso
+
+
 def submit(contract, vm, case_name: str, case_id: str | None = None):
     """Submit one fixture as an arbitrary (non-owner) sender."""
     fixture = FIXTURES[case_name]
