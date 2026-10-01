@@ -1,0 +1,31 @@
+# secrets — never commit
+.env
+.env.*
+!.env.example
+web/.env
+web/.env.local
+
+# python
+.venv/
+__pycache__/
+*.py[cod]
+.pytest_cache/
+.ruff_cache/
+*.egg-info/
+
+# node
+node_modules/
+web/.next/
+web/out/
+npm-debug.log*
+pnpm-debug.log*
+
+# genlayer / gltest
+.genlayer/
+gltest-results/
+*.log
+
+# editors / os
+.DS_Store
+.idea/
+.vscode/
