@@ -11,7 +11,7 @@ import json
 
 import pytest
 
-from conftest import CONTRACT, OWNER, SUBMITTER  # noqa: F401
+from conftest import CONTRACT, OWNER, SDK_VERSION, SUBMITTER  # noqa: F401
 
 RPC_URL = "https://base-sepolia-rpc.publicnode.com"
 
@@ -106,7 +106,8 @@ def test_contract_fetches_a_public_rpc_and_confirms(direct_vm, direct_deploy):
     )
 
     halt = direct_deploy(CONTRACT, owner=OWNER, evidence_url_template="",
-                         evidence_mode="jsonrpc", evidence_rpc_url=RPC_URL)
+                         evidence_mode="jsonrpc", evidence_rpc_url=RPC_URL,
+                         sdk_version=SDK_VERSION)
     direct_vm.sender = SUBMITTER
     halt.submit_proof(json.dumps({
         "case_id": "rpc-1",
@@ -131,7 +132,8 @@ def test_contract_reports_insufficient_for_unknown_tx(direct_vm, direct_deploy):
         json.dumps({"verdict": "INSUFFICIENT_EVIDENCE", "rationale": "no receipt"}),
     )
     halt = direct_deploy(CONTRACT, owner=OWNER, evidence_url_template="",
-                         evidence_mode="jsonrpc", evidence_rpc_url=RPC_URL)
+                         evidence_mode="jsonrpc", evidence_rpc_url=RPC_URL,
+                         sdk_version=SDK_VERSION)
     direct_vm.sender = SUBMITTER
     halt.submit_proof(json.dumps({
         "case_id": "rpc-2",

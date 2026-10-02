@@ -15,6 +15,15 @@ sys.path.insert(0, str(Path(__file__).parent))
 from fixtures import FIXTURES, submit_payload  # noqa: E402
 
 CONTRACT = "contracts/emergency_halt.py"
+
+# Pin the GenVM SDK version explicitly.
+#
+# Without this, gltest picks the lexicographically newest tarball in its cache. Running
+# `genvm-lint check` drops symlinks named after the *linter's* bundle versions into that same
+# cache directory, so the "newest" entry silently becomes a bundle with a different internal
+# layout and every test fails with "No py-genlayer runners found in tarball". Pinning makes the
+# suite independent of whatever else is lying around in ~/.cache.
+SDK_VERSION = "v0.3.0-rc7"
 OWNER = "0x" + "aa" * 20
 SUBMITTER = "0x" + "bb" * 20
 TARGET = "0x" + "22" * 20
@@ -90,7 +99,8 @@ def halt(direct_vm, direct_deploy):
         direct_vm.mock_llm(pattern, response)
 
     contract = direct_deploy(CONTRACT, owner=OWNER,
-                             evidence_url_template="https://evidence.test/{tx_hash}")
+                             evidence_url_template="https://evidence.test/{tx_hash}",
+                             sdk_version=SDK_VERSION)
     direct_vm.sender = OWNER
     return contract
 
@@ -134,5 +144,10 @@ def contract_module(direct_deploy):
 	"""
 	import sys
 
-	direct_deploy(CONTRACT, owner=OWNER, evidence_url_template="https://evidence.test/{tx_hash}")
+	direct_deploy(
+		CONTRACT,
+		owner=OWNER,
+		evidence_url_template="https://evidence.test/{tx_hash}",
+		sdk_version=SDK_VERSION,
+	)
 	return sys.modules["_contract_emergency_halt"]
