@@ -205,7 +205,12 @@ published Python SDK speaks that ABI** (`deploy/README.md` has the full finding 
 on Studionet because studio-dev cannot execute anything. studio-dev remains configured as the
 deploy target, so it becomes usable unchanged if the preview recovers.
 
-**4. EVM emit cannot be verified locally.** See the next section — it is genuinely unresolved.
+**4. EVM emit does not deliver, and the freeze reaches the target off-chain.** Tested on
+Studionet against a live target: consensus finalized, the contract recorded the call, the call
+returned without raising — and the target chain received nothing. `deploy/freeze_watcher.py` does
+that last hop, so whoever runs it holds a key that can freeze. What changes is that the key can no
+longer freeze *unbounded and unaccountably*: the window comes from an adjudicated verdict, it is
+on the public record, and the target lapses it itself. Full evidence in the next section.
 
 **5. This is tier-2, and the evidence is shallow.**
 The digest uses receipt status, one selector, event-topic counts and two magnitude bands. It
@@ -226,31 +231,66 @@ environment, and web search surfaced no existing GenLayer pause/circuit-breaker 
 AutoBounty (1000-pt Track Winner), BuildersClaw (2000-pt Grand Prize), GHBounty and
 MergeProof; the comparison against them is in `docs/integration.md`.
 
-## What we could not verify
+## Tested, and found broken
 
-**Is EVM `emit()` actually delivering the freeze? Unresolved, and we say so.**
+### EVM `emit()` does not deliver. Tested 2026-10-02, not assumed.
 
-The `freeze` call is emitted to the target from inside the contract on a confirmed verdict,
-placed **outside** the nondet block (EVM messages only go out on finality, and cross-contract
-ops are forbidden inside a nondet block). But:
+This was the one gap touching the headline claim. It is now **tested, and the answer is no.**
 
-- Under **local GLSim** the emit is a verified no-op. `gltest`'s WASI mock has no `EthSend`
-  branch, so `gl_call` returns a sentinel that `gl_call_generic` maps to `Lazy(lambda: None)`
-  — and `_generate_send` calls `.get()`, which returns `None` **without raising**. The emit
-  reports success and does nothing. An assertion that it worked would pass green and prove
-  nothing.
-- Under **real GenVM** it was never observed, because studio-dev cannot execute and the
-  Studionet deploy has no EVM target deployed to receive it.
-- Separately, `.view()` (i.e. `EthCall`) is **broken in the pinned SDK build**:
-  `genlayer/gl/_internal/eth.py` reads `self.parent.address` while the generated proxy only
-  defines `_proxy_parent`, so every view call raises `AttributeError`. This is an SDK defect,
-  not a harness gap, and it affects the published docs example.
+`HaltablePool.sol` (Base Sepolia, `0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B`) is a deployed
+pausable pool. A probe contract (`contracts/probe_emit.py`, on Studionet) called the identical
+emit path the product uses. Result:
 
-So the verdict and the expiry logic are verified; **the last hop from GenLayer to the EVM
-target is not.** `deploy/README.md` and
-`state/reviews/2026-10-01-hackathon-discovery/M0B-R1-EVM-EMIT.md` have the evidence. A
-documented watcher fallback exists if it turns out to be unavailable:
-`docs/integration.md` describes it.
+```
+GenLayer tx   : FINALIZED, MAJORITY_AGREE
+probe traces  : EMIT_RETURNED          <- call returned, did not raise
+probe counts  : freeze=1              <- contract believes it called freeze()
+pool state    : frozenUntil UNCHANGED <- nothing arrived
+```
+
+Every signal the contract can produce says success, and the target chain received nothing. Ruled
+out first: ABI shape (positional-only params, same declaration as the product), ghost-contract
+registration (`isGhostContract` returns `true` for the target), and call site (outside the
+nondet block, which is the only legal place).
+
+Under local GLSim the same call is a **verified silent no-op** — `gltest`'s WASI mock has no
+`EthSend` branch, so the sentinel becomes `Lazy(lambda: None)` and `_generate_send` returns it
+without raising. That is why this was easy to miss: a local test asserting the emit worked would
+pass green.
+
+Full evidence: `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`.
+
+### So the last hop is off-chain, and here is the honest cost
+
+The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 38
+hermetic tests plus live consensus runs. **Delivery of the freeze to an EVM contract is not.**
+
+`deploy/freeze_watcher.py` does it instead, as working code rather than a documented intention:
+
+- **read path, live:** polled the deployed contract, found all 3 cases, correctly took no action
+- **write path, live:** invoked against the real target — `frozenUntil` moved, `isFrozen()` went
+  true, then false on expiry **with no unfreeze transaction sent**
+
+Only the composition (verdict observed → watcher fires) is unexercised, because no live case has
+reached `CONFIRMED_EXPLOIT`.
+
+**State the trade plainly:** whoever runs the watcher holds a key that can freeze. What this
+architecture changes is that the key can no longer freeze *unbounded and unaccountably* — the
+window comes from an adjudicated verdict, it is on the public record, and the target lapses it
+itself. That is weaker than "consensus freezes your protocol". It is the claim the evidence
+supports, and it is still the one nobody else in the ecosystem is making.
+
+### Also broken in the pinned SDK
+
+`.view()` / `EthCall` raises `AttributeError` on every call:
+`genlayer/gl/_internal/eth.py` reads `self.parent.address` while the generated proxy only defines
+`_proxy_parent`. SDK defect, not a harness gap; it breaks the published docs example too.
+
+### Not verified
+
+**The frontend in a browser.** No browser was connected to this environment. The app was served
+over HTTP (200) and its exact client path was exercised in Node — 8 reads against the live
+contract, all passing — but React rendering and the write path were never observed visually.
 
 **Did we check the Project Explorer for an existing pause project?** Partially. No browser
 was connected to this environment, so the authenticated Explorer could not be enumerated. Web

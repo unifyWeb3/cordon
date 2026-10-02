@@ -92,6 +92,37 @@ observation in this transcript.
 carry the drain signature (see `tests/direct/test_consensus_gate.py`). We did not manufacture a
 public transaction just to make the demo look better.
 
+## Demo target — deployed and verified on Base Sepolia (added 2026-10-02)
+
+    contract : HaltablePool.sol  ->  0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B
+    deployer : 0x3211d1419709682b81c53cc51cb63622e25488d3
+
+Freeze semantics proven live, with no GenLayer involved:
+
+1. `deposit()` 0.01 ETH -> success
+2. `freeze("manual-test", now+120)` -> status `0x1`, event emitted
+3. `isFrozen()` -> **true**, `secondsUntilUnfreeze()` counting down
+4. `withdraw(...)` -> **reverts `paused`**
+5. wait for expiry, send **nothing**
+6. `isFrozen()` -> **false**, and `withdraw(...)` **succeeded**
+
+Step 5 is the thesis: the target lapsed its own freeze with no human action.
+
+### Two practical traps found the hard way
+
+- **Base Sepolia's clock runs ahead of the host** (~53s when measured). A deadline computed with
+  `date +%s` produced a `until` already in the past, so `freeze()` silently reverted and
+  `isFrozen()` stayed false — with no error surfaced by the send. **Read chain time.**
+- **Base is an OP-stack L2 and requires `gasPrice`** alongside EIP-1559 fields, or `eth-account`
+  rejects the transaction with `Transaction must include these fields: {'gasPrice'}`.
+
+### EVM emit: tested, and it does not deliver
+
+See `R1-EMIT-RESULTS.md` in the 2026-10-02 review directory for the full transcript. Summary:
+consensus `FINALIZED` / `MAJORITY_AGREE`, `emit().freeze()` returned without raising, the probe
+recorded `freeze=1` — and `HaltablePool.frozenUntil` was unchanged. Ghost-contract registration
+is not the missing step (`isGhostContract` returns true).
+
 ## Caveat on the execution-result field
 
 `txExecutionResultName` reads as `None` through `genlayer-py` 0.18.0 on Studionet — an

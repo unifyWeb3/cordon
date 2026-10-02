@@ -11,6 +11,7 @@ address as a live-demo target rather than something to build on.
 """
 
 import argparse
+import json
 import os
 import sys
 from pathlib import Path
@@ -44,23 +45,29 @@ from genlayer_py.types import (  # noqa: E402
     TransactionStatus,
 )
 
-CONTRACT = ROOT / "contracts" / "emergency_halt.py"
+DEFAULT_CONTRACT = "contracts/emergency_halt.py"
 
 # Public Base Sepolia RPC. No API key, so the contract can reach it from any node.
 PUBLIC_RPC = "https://base-sepolia-rpc.publicnode.com"
 
 
-def build_client():
+def build_client(network: str):
 	key = os.environ["GENLAYER_PRIVATE_KEY"]
 	account = Account.from_key(key)
-	client = create_client(chain=studio_dev_chain(), account=account)
-	return client, account
+	if network == "studio-dev":
+		chain = studio_dev_chain()
+	else:
+		from genlayer_py.chains.studionet import studionet as _sn
+
+		chain = _sn
+	return create_client(chain=chain, account=account), account
 
 
-def owner_address(client, account) -> str:
+def owner_address(client, account, network: str = "studionet") -> str:
 	"""Prefer the configured owner; fall back to the deploying key's own address."""
 	owner = os.environ.get("DEPLOYER_ADDRESS") or account.address
-	print(f"  chainId          : {studio_dev_chain().id}")
+	print(f"  network          : {network}")
+	print(f"  chainId          : {client.chain.id}")
 	try:
 		constraints = client.provider.make_request("gen_getEnforcedConstraints", [])
 		print(f"  enforced owner   : {constraints.get('gen_address', '<unset>')}")
@@ -165,6 +172,37 @@ def deploy_fee_aware(client, account, code: str, args, owner: str, salt_nonce: i
 	return tx_hash, address
 
 
+def deploy_standard(client, account, code: str, args, owner: str) -> tuple[str, str]:
+	"""Deploy via the SDK's own encoder. Used on Studionet, which is not fee-charging.
+
+	Two things differ from the studio-dev path and both are easy to get wrong:
+
+	  * `deploy_contract` returns ONLY the GenLayer txId on this path, not (txId, address).
+	    The contract address has to be read back out of the transaction afterwards.
+	  * Constructor arguments vary per contract. Pass them explicitly with --ctor-args;
+	    the default is emergency_halt.py's four.
+	"""
+	ctor_args = json.loads(args.ctor_args) if args.ctor_args else [
+		owner,
+		"",
+		args.evidence_mode,
+		args.rpc_url,
+	]
+	tx_id = client.deploy_contract(code, args=ctor_args)
+	import time
+
+	for _ in range(90):
+		st = client.provider.make_request("gen_getTransactionStatus", [tx_id]).get("result")
+		if st == "FINALIZED":
+			break
+		time.sleep(2)
+	tx = client.get_transaction(tx_id)
+	address = tx.get("to_address")
+	print(f"  status          : {tx.get('status_name')}")
+	print(f"  consensus       : {tx.get('result_name')}")
+	return tx_id, address
+
+
 def wait_for_status(client, tx_hash: str, until: str, tries: int = 150) -> str:
 	"""Poll `gen_getTransactionStatus` until the transaction reaches `until`.
 
@@ -199,6 +237,20 @@ def main() -> int:
 	parser = argparse.ArgumentParser()
 	parser.add_argument("--check", action="store_true", help="pre-flight only, do not deploy")
 	parser.add_argument(
+		"--contract",
+		default=DEFAULT_CONTRACT,
+		help="contract path relative to the repo root",
+	)
+	parser.add_argument(
+		"--network",
+		default="studionet",
+		choices=["studionet", "studio-dev"],
+		help=(
+			"studionet (61999) executes contracts. studio-dev (61997) is fee-charging and "
+			"currently cannot execute any contract -- see deploy/README.md"
+		),
+	)
+	parser.add_argument(
 		"--evidence-mode",
 		default="jsonrpc",
 		choices=["jsonrpc", "digest"],
@@ -208,6 +260,11 @@ def main() -> int:
 	parser.add_argument("--rpc-url", default=PUBLIC_RPC)
 	parser.add_argument("--max-rotations", type=int, default=3)
 	parser.add_argument(
+		"--ctor-args",
+		default=None,
+		help="JSON array of constructor args (default: emergency_halt.py's four)",
+	)
+	parser.add_argument(
 		"--salt-nonce",
 		type=int,
 		default=0,
@@ -215,15 +272,16 @@ def main() -> int:
 	)
 	args = parser.parse_args()
 
-	if not CONTRACT.exists():
-		print(f"contract not found: {CONTRACT}")
+	contract_path = ROOT / args.contract
+	if not contract_path.exists():
+		print(f"contract not found: {contract_path}")
 		return 1
 
-	code = CONTRACT.read_text()
-	print(f"contract          : {CONTRACT.relative_to(ROOT)} ({len(code)} bytes)")
+	code = contract_path.read_text()
+	print(f"contract          : {contract_path.relative_to(ROOT)} ({len(code)} bytes)")
 
-	client, account = build_client()
-	owner = owner_address(client, account)
+	client, account = build_client(args.network)
+	owner = owner_address(client, account, args.network)
 
 	# Pre-flight the schema. Hosted networks reject this RPC, which is why genlayer_py itself
 	# ships a hosted-Studio client purely for schema lookup (see get_gl_hosted_studio_client).
@@ -254,10 +312,14 @@ def main() -> int:
 	if args.check:
 		return 0
 
-	print("deploying (fee-aware) ...")
-	tx_hash, address = deploy_fee_aware(
-		client, account, code, args, owner, salt_nonce=args.salt_nonce
-	)
+	if args.network == "studio-dev":
+		print("deploying (fee-aware, required by this network) ...")
+		tx_hash, address = deploy_fee_aware(
+			client, account, code, args, owner, salt_nonce=args.salt_nonce
+		)
+	else:
+		print("deploying (standard SDK path) ...")
+		tx_hash, address = deploy_standard(client, account, code, args, owner)
 	print(f"deploy tx hash    : {tx_hash}")
 	print(f"contract address  : {address}")
 
