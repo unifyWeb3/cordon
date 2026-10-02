@@ -15,8 +15,9 @@ __pycache__/
 
 # node
 node_modules/
-web/.next/
-web/out/
+.next/
+out/
+*.tsbuildinfo
 npm-debug.log*
 pnpm-debug.log*
 
