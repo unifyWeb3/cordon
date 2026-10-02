@@ -166,10 +166,9 @@ function Inner() {
     setBusy(true);
     try {
       const { createClient } = await import("genlayer-js");
-      const { studionet, studioDevnet } = await import("genlayer-js/chains");
-      const chain = CHAIN_ID === 61997 ? studioDevnet : studionet;
+      const { studionet } = await import("genlayer-js/chains");
       const client = createClient({
-        chain,
+        chain: studionet,
         account: (account ?? undefined) as never,
       });
       const payload = JSON.stringify({
@@ -183,6 +182,9 @@ function Inner() {
         functionName: "submit_proof",
         args: [payload],
         kwargs: {},
+        // Required by this SDK version's type, and 0 is correct: the fee deposit travels
+        // with the transaction envelope, not as contract value.
+        value: 0n,
       });
       const caseId = JSON.parse(payload).case_id as string;
       setSelected(caseId);

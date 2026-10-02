@@ -8,8 +8,18 @@
     "start": "next start -p 3000",
     "lint": "next lint"
   },
+  "//": [
+    "WHY genlayer-js IS PINNED TO 1.1.8 -- DO NOT 'UPGRADE' THIS WITHOUT READING:",
+    "2.0.0-rc.1 is broken for reads. Its makeCalldataObject() writes the method under an",
+    "empty-string key (ret[''] = method, dist/index.js:279) where the node expects 'method',",
+    "so every readContract() fails with 'gen_call: execution failed'. Verified 2026-10-02.",
+    "The RC is only needed for studio-dev's fee-aware addTransaction ABI -- and studio-dev",
+    "cannot execute contracts at all, so the RC bought no functionality and cost the frontend",
+    "its entire read path. python-side deploys keep their own encoding in deploy/fees_aware.py.",
+    "See state/reviews/2026-10-02-build-review/FRONTEND-BLOCKER.md"
+  ],
   "dependencies": {
-    "genlayer-js": "2.0.0-rc.1",
+    "genlayer-js": "1.1.8",
     "next": "15.1.6",
     "react": "19.0.0",
     "react-dom": "19.0.0"

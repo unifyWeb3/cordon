@@ -135,9 +135,7 @@ contracts/emergency_halt.py      the Intelligent Contract
 contracts/minimal_probe.py       20-line deploy probe (see "What we could not verify")
 deploy/                          deploy + submit scripts, and deploy/README.md
 docs/integration.md              how another protocol plugs this in
-evidence/                        stage-1 helper
 tests/direct/                    hermetic suite: 38 tests, no network
-tests/integration/               gltest suite against local GLSim
 web/                             Next.js 15 frontend
 ```
 
@@ -148,7 +146,7 @@ Requires Python 3.12 and Node 20+.
 ```bash
 uv sync                       # pinned test harness (genlayer-test 0.28.0, genvm-linter 0.10.0)
 
-# 1. the hermetic gate -- no network, ~35s
+# 1. the hermetic gate -- no network, ~25s on an idle machine
 uv run pytest tests/direct/ -v
 
 # 2. contract lint + SDK validation
@@ -163,7 +161,9 @@ while the deploy scripts want a current SDK — see `deploy/README.md`.
 
 ## Tests
 
-`uv run pytest tests/direct/ -v` → **38 passed**.
+`uv run pytest tests/direct/ -v` → **38 passed**. ~23s on an idle machine; budget a few
+minutes if something else is loading the box. The test count is the stable number, not the
+wall clock.
 
 Hermetic by construction: the web fetch and the model are both mocked from recorded evidence.
 The model stand-in keys off the *observed evidence in the prompt*, so if the contract ever

@@ -11,8 +11,8 @@
  *    `txExecutionResultName` is checked separately from status everywhere.
  */
 
-import { createAccount, createClient } from "genlayer-js";
-import { studionet, studioDevnet } from "genlayer-js/chains";
+import { createClient } from "genlayer-js";
+import { studionet } from "genlayer-js/chains";
 import type { Address } from "viem";
 
 export const RPC_URL =
@@ -31,7 +31,28 @@ export const TARGET_CHAIN_NAME =
 export const TARGET_CHAIN_EXPLORER =
   process.env.NEXT_PUBLIC_TARGET_CHAIN_EXPLORER ?? "https://sepolia.basescan.org";
 
-export const chain = CHAIN_ID === 61997 ? studioDevnet : studionet;
+/**
+ * Studionet only, deliberately.
+ *
+ * genlayer-js 1.1.8 -- the version this app must use (see package.json) -- exports only
+ * `localnet`, `studionet`, `testnetAsimov` and `testnetBradbury`. It has no `studioDevnet`
+ * chain constant; that arrives in 2.0.0-rc.1, which is broken for reads.
+ *
+ * studio-dev is unavailable here for two independent reasons, either of which is sufficient:
+ * the pinned SDK cannot express its chain, and studio-dev (chain 61997) cannot execute
+ * Intelligent Contracts at all -- see deploy/README.md. The live deployment is Studionet.
+ *
+ * Failing loudly beats silently pointing at the wrong chain.
+ */
+export const chain = studionet;
+
+if (CHAIN_ID !== 61999) {
+  throw new Error(
+    `This app only supports Studionet (chain 61999). NEXT_PUBLIC_GENLAYER_CHAIN_ID is ` +
+      `${CHAIN_ID}, and genlayer-js@1.1.8 has no constant for it. See web/package.json for ` +
+      `why the SDK is pinned, and deploy/README.md for the studio-dev findings.`,
+  );
+}
 
 /** Read-only client: no account, used for every `eth_call`-style read. */
 export function readClient() {

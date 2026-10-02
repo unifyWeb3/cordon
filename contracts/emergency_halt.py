@@ -7,12 +7,19 @@ wrong lifts itself when ``expires_at`` passes, with no human action.
 
 Three stages, per the BuildersClaw shape:
 
-  Stage 1  deterministic evidence collection (off-chain, no consensus)
-  Stage 2  GenLayer consensus on the verdict  (studio-dev / local GLSim)
+  Stage 1  deterministic evidence -- fetched and reduced to stable fields inside the
+           nondet block, with no model involved
+  Stage 2  GenLayer consensus on ONE discrete enum (the verdict)
   Stage 3  evidence retention -- every field below is publicly readable
 
-The contract itself only does Stage 2 and 3. Stage 1 lives in ``evidence/collect.py`` and
-emits a *stable-field* digest; see ``derive_digest`` in that module for why that matters.
+The contract itself does Stage 1, 2 and 3 -- Stage 1 in ``leader_fn``, which reduces a fetched
+receipt to a *stable-field* digest before anything consensus-bound sees it. See
+``derive_digest_from_rpc`` and ``digest_signature`` below for why that matters.
+
+Earlier drafts had Stage 1 in a separate off-chain ``evidence/collect.py``. It was folded in
+here because the reduction has to run inside the nondet block anyway: the leader and each
+validator fetch independently, so a digest computed off-chain and fetched over HTTP would simply
+introduce a second thing that can differ between them.
 
 Equivocation discipline (R2 in the discovery notes):
   * leader and validators fetch independently, so nothing volatile may cross the boundary.

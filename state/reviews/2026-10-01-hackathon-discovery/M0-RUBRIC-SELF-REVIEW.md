@@ -24,8 +24,8 @@ a prediction of the score — reward weights are not published anywhere `[SOURCE
 | "Meaningfully different from boilerplate" | README architecture; integration.md §8 | **Met** | Explicit two/three-stage design with the BuildersClaw rationale, plus the enum-only Partial Field Matching. |
 | "…from contracts that already exist in the ecosystem" | integration.md §8 | **Partially met** | Written comparison vs AutoBounty, BuildersClaw, GHBounty, MergeProof. **Caveat:** could not enumerate the authenticated Project Explorer — no browser in this environment. "No evidence of prior art", not "confirmed none". |
 | "Reusable by other builders" | docs/integration.md | **Met** | Steps, the Solidity interface, the `until`-is-a-timestamp requirement, the watcher fallback, the comparison table. |
-| "Frontend genuinely calls the contract … full transaction lifecycle" | web/; LIVE-RUN.md | **Met** | `readContract` for stats/cases/evidence, `writeContract` for submit, polled lifecycle. PENDING→PROPOSING→COMMITTING→ACCEPTED→FINALIZED all observed live and rendered as discrete steps. |
-| "Complete source code and accurate docs" | whole repo | **Met** | `uv sync` → `pytest` → `genvm-lint check` → `npm run dev`, all verified this session. |
+| "Frontend genuinely calls the contract … full transaction lifecycle" | web/; LIVE-RUN.md | **MET-PENDING-BROWSER-CHECK** | **Downgraded from "Met" on 2026-10-02.** The lifecycle evidence in LIVE-RUN.md is real but was produced by the **Python** client (`deploy/submit_proof.py`), not the browser. The browser path was additionally **broken**: `web/package.json` pinned `genlayer-js@2.0.0-rc.1`, whose `makeCalldataObject` emits the method under an empty-string key (`ret[""] = method`, `dist/index.js:279`) where the node expects `"method"`, so every `readContract` failed with `gen_call: execution failed`. Cause was a bad pin, not a contract fault; see the Phase 0 note below. The line is earned only once the app is loaded against the live contract and the lifecycle is observed in the browser. |
+| "Complete source code and accurate docs" | whole repo | **PARTIALLY MET** | **Downgraded from "Met" on 2026-10-02.** Verified this session: `pytest` (38 passed), `genvm-lint check` (passed), `tsc --noEmit` (clean), `next build` (EXIT=0). **Not** verified: `npm run dev` was never run, and the app was never loaded against the live contract — the SDK pin above made that impossible. Three doc inaccuracies were also outstanding: a contract docstring referenced a non-existent `evidence/collect.py`, `tests/integration/` was advertised in the README but empty, and the README quoted a stale ~35s test runtime (actual ~82s). All three corrected in the Phase 0 commit. |
 | "with a credible path to continued use" | integration.md; README | **Weak** | Publish module → one integrating protocol → Milestone submissions `[A4]`. No revenue claim, because none is validated. |
 | "live demos, videos, and public posts earn extra points" | — | **NOT DONE** | M9 not started: no video, no public post. |
 | "Not a learning exercise." | whole repo | **Met** | The exploit scenario is the product, not a demo of consensus. |
@@ -46,6 +46,25 @@ a prediction of the score — reward weights are not published anywhere `[SOURCE
 | `genvm-linter` clean | `genvm-lint check` → lint + validation passed | Met |
 | EVM emit delivers the freeze | **not verified** | **NOT ESTABLISHED** — see README "What we could not verify". Emit is a no-op under GLSim and never observed on real GenVM. |
 | Deployed to studio-dev | attempted; execution broken there | **NO** — Studionet used instead |
+
+## Phase 0 correction log (2026-10-02)
+
+An independent audit of this table found two overstatements and one dependency defect. Both
+overstatements are corrected above; recorded here so the change is auditable rather than silent.
+
+1. **Frontend rubric line downgraded.** It claimed browser-verified evidence that came from the
+   Python client. That is exactly the kind of provenance slip this project exists to avoid, so
+   it is logged explicitly rather than quietly edited.
+2. **Docs line downgraded.** `npm run dev` had never been run.
+3. **Root cause of the frontend defect: a bad pin.** `genlayer-js@2.0.0-rc.1` was pinned in
+   `web/package.json` because its release candidate speaks studio-dev's fee-aware
+   `addTransaction` ABI. But studio-dev cannot execute contracts at all, so the pin delivered no
+   working functionality — it only shipped a broken read encoder to the browser. Pinned down to
+   `1.1.8`, with the reason recorded in `package.json` and the README so it is not re-pinned.
+
+What Phase 0 does **not** change: the live consensus evidence in `LIVE-RUN.md` stands. Those
+runs were Python-client reads against the deployed contract and are real. Only the claim that the
+*frontend* had been exercised was wrong.
 
 ## Where this is weakest
 
