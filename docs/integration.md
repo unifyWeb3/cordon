@@ -152,14 +152,36 @@ appeal process. Note the asymmetry worth stating plainly: **the auto-expiry is t
 appeals are the considered one.** Expiry bounds the blast radius; an appeal can overturn the
 reasoning.
 
-## 5. If EVM emit is unavailable in your environment
+## 5. Delivery is off-chain: run the watcher
 
-`freeze()` may not be deliverable — we could not verify the last hop ourselves (see README
-"What we could not verify"). If your deployment cannot receive it, the fallback is honest and
-small:
+**`freeze()` is not delivered by the GenLayer contract.** This was tested, not assumed
+(2026-10-02): consensus finalized with `MAJORITY_AGREE`, `emit().freeze()` returned without
+raising, the contract recorded the call — and the target chain received nothing. Full transcript
+in `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`.
 
-1. Read the verdict from GenLayer storage (`get_evidence`, `is_frozen`, `expires_at`).
-2. Call `freeze()` yourself from a small watcher you run and document.
+So the last hop is yours to run, and it is small:
+
+    python deploy/freeze_watcher.py --address <HALT> --target <POOL> --dry-run   # inspect
+    python deploy/freeze_watcher.py --address <HALT> --target <POOL>             # freeze
+
+What it does: reads `get_evidence` for every case, and for any `CONFIRMED_EXPLOIT` case that has
+not been emitted yet, calls `freeze(reason, epoch(expires_at))` on your target. The window comes
+from the adjudicated verdict, not from the watcher's own clock.
+
+**State this trade to your users.** Whoever runs the watcher holds a key that can freeze. What this
+architecture changes is that the key can no longer freeze *unbounded and unaccountably* — the
+window is on the public record, appealable, and your target lapses it itself. Ship the watcher in
+your repo, not as a hosted dependency.
+
+If you want to do it yourself instead, the inputs are all public and need no privileged GenLayer
+access:
+
+1. Read the verdict from GenLayer storage: `get_evidence`, `is_frozen`, `expires_at`.
+2. Call `freeze()` with `until` taken from `expires_at`.
+
+Note the deadline must come from **chain time**. Base Sepolia's clock ran ~53s ahead of our host
+during testing, and a host-computed `until` was already in the past by the time the transaction
+landed — so `freeze()` reverted silently with nothing frozen.
 
 The verdict, the reasoning, the evidence and the deadline are all publicly readable on-chain,
 so a watcher needs no privileged GenLayer access — only your own pause authority. Ship it in
@@ -201,7 +223,8 @@ carries a self-expiring, consensus-gated freeze. The live projects we found do n
 
 ## 9. Honest gaps
 
-- Last-hop EVM delivery is unverified on our side (README).
+- EVM delivery does not work on the current GenLayer stack; it is done off-chain by the watcher,
+  and that watcher holds a key that can freeze (README, docs section 5).
 - The default evidence digest is shallow; extend it for your protocol.
 - We ran against Studionet, not studio-dev, because studio-dev could not execute contracts
   when we tested (deploy/README.md).

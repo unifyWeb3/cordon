@@ -2,17 +2,45 @@
 @tailwind components;
 @tailwind utilities;
 
+/*
+ * Type scale and colour tokens. Phase 2 replaced the inline-style soup with this so the page
+ * reads as a designed surface rather than a debug view.
+ *
+ * Exactly three verdict colours, and they are states rather than shades of grey -- a glance has
+ * to tell you which of the three things happened.
+ */
 :root {
-  --bg: #0b0e14;
-  --panel: #131823;
-  --panel-2: #1b2231;
-  --line: #26303f;
-  --text: #e6edf6;
-  --muted: #8b98ab;
+  --bg: #0a0c11;
+  --panel: #12151d;
+  --panel-2: #181c26;
+  --panel-3: #1f2430;
+  --line: #262c39;
+  --line-soft: #1b202a;
+
+  --text: #e8edf5;
+  --text-2: #aab6c8;
+  --muted: #7d8a9e;
   --accent: #6ea8fe;
-  --danger: #ff6b6b;
-  --warn: #ffc857;
-  --ok: #4ade80;
+  --accent-dim: #21395c;
+
+  /* The three verdicts. Distinct hue and distinct weight, not three greys. */
+  --v-confirmed: #ff6b6b;
+  --v-confirmed-bg: #2c1418;
+  --v-false: #4ade80;
+  --v-false-bg: #10231a;
+  --v-insufficient: #ffc857;
+  --v-insufficient-bg: #251f12;
+
+  --radius: 12px;
+  --radius-sm: 8px;
+
+  --t-xs: 11px;
+  --t-sm: 13px;
+  --t-base: 15px;
+  --t-lg: 18px;
+  --t-xl: 24px;
+  --t-2xl: 34px;
+  --t-3xl: 46px;
 }
 
 * {
@@ -25,101 +53,136 @@ body {
   color: var(--text);
   font-family: ui-sans-serif, system-ui, -apple-system, "Segoe UI", Roboto,
     "Helvetica Neue", Arial, sans-serif;
+  font-size: var(--t-base);
+  line-height: 1.6;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1 { font-size: var(--t-2xl); line-height: 1.15; letter-spacing: -0.02em; margin: 0; }
+h2 { font-size: var(--t-xl); line-height: 1.2; letter-spacing: -0.015em; margin: 0; }
+h3 { font-size: var(--t-lg); line-height: 1.3; margin: 0; }
+
+p { margin: 0; }
+
+a { color: var(--accent); text-decoration: none; }
+a:hover { text-decoration: underline; }
+
+.mono {
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+  font-size: var(--t-xs);
+  word-break: break-all;
+}
+
+.sub { color: var(--muted); font-size: var(--t-sm); }
+.tnum { font-variant-numeric: tabular-nums; }
+
+.eyebrow {
+  font-size: var(--t-xs);
+  text-transform: uppercase;
+  letter-spacing: 0.1em;
+  color: var(--muted);
+  font-weight: 600;
 }
 
 .card {
   background: var(--panel);
   border: 1px solid var(--line);
-  border-radius: 12px;
-  padding: 18px;
+  border-radius: var(--radius);
+  padding: 22px;
 }
 
-.sub {
-  color: var(--muted);
-}
-
-.mono {
-  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
-  font-size: 12px;
-  word-break: break-all;
-}
-
-.btn {
-  background: var(--accent);
-  color: #06101f;
-  border: none;
-  border-radius: 8px;
-  padding: 10px 16px;
-  font-weight: 600;
-  cursor: pointer;
-}
-
-.btn:disabled {
-  opacity: 0.5;
-  cursor: not-allowed;
-}
-
-.btn-ghost {
-  background: transparent;
-  color: var(--text);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  padding: 10px 16px;
-  cursor: pointer;
-}
-
-input,
-textarea {
-  width: 100%;
+.card-quiet {
   background: var(--panel-2);
-  border: 1px solid var(--line);
-  border-radius: 8px;
-  color: var(--text);
-  padding: 10px 12px;
-  font-family: inherit;
-  font-size: 14px;
-}
-
-label {
-  display: block;
-  font-size: 12px;
-  color: var(--muted);
-  margin-bottom: 6px;
-  text-transform: uppercase;
-  letter-spacing: 0.04em;
+  border: 1px solid var(--line-soft);
+  border-radius: var(--radius-sm);
+  padding: 14px;
 }
 
 .pill {
   display: inline-block;
   padding: 3px 10px;
   border-radius: 999px;
-  font-size: 11px;
+  font-size: var(--t-xs);
   font-weight: 700;
   letter-spacing: 0.04em;
+  white-space: nowrap;
 }
 
-.stage {
-  display: flex;
-  gap: 6px;
-  flex-wrap: wrap;
+.btn {
+  background: var(--accent);
+  color: #06101f;
+  border: none;
+  border-radius: var(--radius-sm);
+  padding: 11px 18px;
+  font-weight: 650;
+  font-size: var(--t-sm);
+  font-family: inherit;
+  cursor: pointer;
 }
+
+.btn:disabled { opacity: 0.45; cursor: not-allowed; }
+
+.btn-ghost {
+  background: transparent;
+  color: var(--text);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  padding: 11px 18px;
+  font-size: var(--t-sm);
+  font-family: inherit;
+  cursor: pointer;
+}
+
+.btn-ghost:hover { border-color: var(--muted); }
+
+input, textarea {
+  width: 100%;
+  background: var(--panel-2);
+  border: 1px solid var(--line);
+  border-radius: var(--radius-sm);
+  color: var(--text);
+  padding: 11px 13px;
+  font-family: inherit;
+  font-size: var(--t-sm);
+}
+
+input:focus, textarea:focus { outline: 2px solid var(--accent-dim); outline-offset: 1px; }
+
+label {
+  display: block;
+  font-size: var(--t-xs);
+  color: var(--muted);
+  margin-bottom: 6px;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  font-weight: 600;
+}
+
+/* Lifecycle. Five discrete states, never collapsed into one. */
+.stage { display: flex; gap: 6px; flex-wrap: wrap; }
 
 .stage-step {
-  padding: 5px 10px;
+  padding: 5px 11px;
   border-radius: 6px;
   border: 1px solid var(--line);
-  font-size: 11px;
+  font-size: var(--t-xs);
   color: var(--muted);
+  font-weight: 600;
+  letter-spacing: 0.03em;
 }
 
-.stage-step.active {
-  border-color: var(--accent);
-  color: var(--accent);
-  font-weight: 700;
-}
+.stage-step.done { background: #16233a; color: var(--accent); border-color: #21395c; }
+.stage-step.active { background: #1a2c47; color: #cfe2ff; border-color: var(--accent); font-weight: 700; }
 
-.stage-step.done {
-  background: #17253a;
-  color: var(--accent);
-  border-color: #24405f;
+.rule { height: 1px; background: var(--line); border: 0; margin: 0; }
+
+.grid-2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 14px; }
+.grid-3 { display: grid; grid-template-columns: repeat(auto-fit, minmax(210px, 1fr)); gap: 14px; }
+
+.kv { display: grid; grid-template-columns: minmax(140px, auto) 1fr; gap: 6px 16px; font-size: var(--t-sm); }
+.kv dt { color: var(--muted); }
+.kv dd { margin: 0; }
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after { animation: none !important; transition: none !important; }
 }

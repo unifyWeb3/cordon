@@ -115,8 +115,40 @@ Observed lifecycle, as distinct states:
 PENDING -> PROPOSING -> COMMITTING -> ACCEPTED -> FINALIZED      (MAJORITY_AGREE)
 ```
 
-Read the second and third rows carefully, because they are the honest result. **On random
-public transactions, the correct answer is usually "not an exploit."** The system reached
+### Equivocation does happen. Found on a second run of the same transaction.
+
+Re-running `live-drain`'s transaction produced **four leader rotations**:
+
+```
+PROPOSING -> COMMITTING -> PROPOSING -> COMMITTING -> PROPOSING -> COMMITTING -> PROPOSING
+-> COMMITTING -> ACCEPTED @66.6s -> FINALIZED @95.3s
+```
+
+and landed on `INSUFFICIENT_EVIDENCE` where the first run of the *same* evidence had landed on
+`FALSE_REPORT`. Both runs saw a byte-identical digest —
+
+```
+tx_found=True  receipt_status=0x1  value_band=ZERO  log_band=MANY
+input_selector=0x1249c58b  repeated=0xddf252ad1be2c8…
+```
+
+— so the **reduction was stable and the judgement was not**. That is the honest result and it
+splits the risk in two:
+
+- The anti-equivocation discipline works. Two independent fetches produced the same evidence.
+- On genuinely borderline evidence, independent models *do* disagree. The digest cannot prevent
+  that; it can only prevent the evidence itself from being the reason.
+
+What saved it was the rotation mechanism, resolving a contested call toward the **conservative**
+verdict. That is the property you want: a disputed freeze becomes no freeze. The cost is latency
+—95s here versus 52–63s for cases that agree — and a `live-drain` case that flaps is a fair
+signal that the committee is genuinely undecided rather than confidently wrong.
+
+An earlier draft of this README claimed "no equivocation across live models." That was true of
+six runs and false of the seventh. Corrected rather than quietly dropped.
+
+Read the second and third rows of the table carefully, because they are the honest result. **On
+random public transactions, the correct answer is usually "not an exploit."** The system reached
 `FALSE_REPORT` against a fabricated claim and against a transaction that superficially looked
 like a drain, because the measured evidence did not support it. A pause module that confirmed
 both would be dangerous, and this is the behaviour you want.
@@ -136,7 +168,9 @@ contracts/minimal_probe.py       20-line deploy probe (see "What we could not ve
 deploy/                          deploy + submit scripts, and deploy/README.md
 docs/integration.md              how another protocol plugs this in
 tests/direct/                    hermetic suite: 38 tests, no network
-web/                             Next.js 15 frontend
+web/                             Next.js 15 frontend (landing narrative + console)
+web/src/lib/content.ts           every user-visible string and number, no JSX literals
+web/src/lib/sample-run.json      a real recorded adjudication, timings included
 ```
 
 ## Quick start
@@ -154,6 +188,7 @@ uv run genvm-lint check contracts/emergency_halt.py
 
 # 3. the frontend
 cd web && npm install && npm run dev
+#   then http://localhost:3000  ·  a single case is shareable at /case/<caseId>
 ```
 
 Live deploy needs a second environment, because `genlayer-test` hard-pins `genlayer-py==0.9.0`

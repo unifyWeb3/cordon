@@ -1,0 +1,191 @@
+{
+  "provenance": {
+    "network": "Studionet",
+    "chainId": 61999,
+    "contract": "0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774b",
+    "recordedAt": "2026-10-02T22:26:52.999407Z",
+    "note": "Real adjudications against a deployed contract. Every field is the run's own; the replay loop only decides when each step comes into view."
+  },
+  "cases": [
+    {
+      "id": "live-drain-run2",
+      "genlayerTx": "0xa794abb94049f13d7ee213d51b2a6e35d57ab976f79edd51584a70715928fe35",
+      "targetChainTx": "0x0822131fff60d8f5a2c62647869ed30638b543eb6e15bbb11b3b62b1581cb144",
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "rationale": "The transaction executed successfully and shows repeated ERC-20 Transfer events (0xddf252ad), which is consistent with multiple token transfers, but the value magnitude band is ZERO, suggesting no significant ETH value moved. The function called (0x1249c58b, commonly 'mint') and the repeated Transfer events could indicate normal minting activity rather than a drain, and without clear evidence of unauthorized fund extraction or pool depletion, the evidence is too ambiguous to confirm an exploit.",
+      "claim": "Attacker drained the protocol: the same transferFrom selector fires fourteen times inside one transaction, sweeping the pool.",
+      "submittedAt": "2026-10-02T22:24:11Z",
+      "evidence": {
+        "valueBand": "ZERO",
+        "logBand": "MANY",
+        "inputSelector": "0x1249c58b",
+        "receiptStatus": "0x1",
+        "repeatedTopic": "0xddf252ad1be2c89b69c2b068fc378daa952ba7f163c4a11628f55a4df523b3ef",
+        "txFound": true
+      },
+      "states": [
+        "PROPOSING",
+        "COMMITTING",
+        "PROPOSING",
+        "COMMITTING",
+        "PROPOSING",
+        "COMMITTING",
+        "PROPOSING",
+        "COMMITTING",
+        "ACCEPTED",
+        "FINALIZED"
+      ],
+      "trail": [
+        {
+          "state": "PROPOSING",
+          "startedAt": 0,
+          "endedAt": 14551
+        },
+        {
+          "state": "COMMITTING",
+          "startedAt": 14551,
+          "endedAt": 18856
+        },
+        {
+          "state": "PROPOSING",
+          "startedAt": 18856,
+          "endedAt": 24758
+        },
+        {
+          "state": "COMMITTING",
+          "startedAt": 24758,
+          "endedAt": 30844
+        },
+        {
+          "state": "PROPOSING",
+          "startedAt": 30844,
+          "endedAt": 39094
+        },
+        {
+          "state": "COMMITTING",
+          "startedAt": 39094,
+          "endedAt": 42977
+        },
+        {
+          "state": "PROPOSING",
+          "startedAt": 42977,
+          "endedAt": 50870
+        },
+        {
+          "state": "COMMITTING",
+          "startedAt": 50870,
+          "endedAt": 56969
+        },
+        {
+          "state": "ACCEPTED",
+          "startedAt": 56969,
+          "endedAt": 66566
+        },
+        {
+          "state": "FINALIZED",
+          "startedAt": 66566,
+          "endedAt": 95344
+        }
+      ],
+      "timing": {
+        "toAcceptedMs": 66566,
+        "toFinalizedMs": 95344,
+        "consensus": "MAJORITY_AGREE",
+        "pollIntervalMs": 400,
+        "note": "Observed client-side, polling gen_getTransactionStatus every ~400ms. Each duration therefore carries up to ~400ms of positive observation error."
+      }
+    },
+    {
+      "id": "live-real-tx-run2",
+      "genlayerTx": "0x34584594b8c5feea78294fc6764b0606c4618a890a2d0f93e3f327d098f42730",
+      "targetChainTx": "0xa7329a50fd54721c60a2d01deccbf8def3ed1ff03a31e03a40d06d135dcb19d7",
+      "verdict": "FALSE_REPORT",
+      "rationale": "The transaction executed successfully with no value transfer, showing only one function call and one event signature rather than repeated transfers, and the claim describes an unbounded drain pattern not supported by the observed evidence.",
+      "claim": "Attacker drained the protocol with a repeated unbounded transferFrom in a single transaction.",
+      "submittedAt": "2026-10-02T22:25:55Z",
+      "evidence": {
+        "valueBand": "ZERO",
+        "logBand": "FEW",
+        "inputSelector": "0x7ea2f04c",
+        "receiptStatus": "0x1",
+        "repeatedTopic": null,
+        "txFound": true
+      },
+      "states": [
+        "COMMITTING",
+        "ACCEPTED",
+        "FINALIZED"
+      ],
+      "trail": [
+        {
+          "state": "COMMITTING",
+          "startedAt": 0,
+          "endedAt": 18346
+        },
+        {
+          "state": "ACCEPTED",
+          "startedAt": 18346,
+          "endedAt": 31996
+        },
+        {
+          "state": "FINALIZED",
+          "startedAt": 31996,
+          "endedAt": 63046
+        }
+      ],
+      "timing": {
+        "toAcceptedMs": 31996,
+        "toFinalizedMs": 63046,
+        "consensus": "MAJORITY_AGREE",
+        "pollIntervalMs": 400,
+        "note": "Observed client-side, polling gen_getTransactionStatus every ~400ms. Each duration therefore carries up to ~400ms of positive observation error."
+      }
+    },
+    {
+      "id": "live-missing-run2",
+      "genlayerTx": "0xac59fbcc47bc859603888068bc45930e596dfd155a6069f7327e13729ac8b56a",
+      "targetChainTx": "0x0000000000000000000000000000000000000000000000000000000000000001",
+      "verdict": "INSUFFICIENT_EVIDENCE",
+      "rationale": "The transaction was not found on-chain, providing no data to assess whether an exploit occurred.",
+      "claim": "Definitely an exploit, trust me.",
+      "submittedAt": "2026-10-02T22:27:03Z",
+      "evidence": {
+        "valueBand": "UNKNOWN",
+        "logBand": "UNKNOWN",
+        "inputSelector": "NONE",
+        "receiptStatus": "NOT_FOUND",
+        "repeatedTopic": null,
+        "txFound": false
+      },
+      "states": [
+        "PROPOSING",
+        "ACCEPTED",
+        "FINALIZED"
+      ],
+      "trail": [
+        {
+          "state": "PROPOSING",
+          "startedAt": 0,
+          "endedAt": 15767
+        },
+        {
+          "state": "ACCEPTED",
+          "startedAt": 15767,
+          "endedAt": 27866
+        },
+        {
+          "state": "FINALIZED",
+          "startedAt": 27866,
+          "endedAt": 51703
+        }
+      ],
+      "timing": {
+        "toAcceptedMs": 27866,
+        "toFinalizedMs": 51703,
+        "consensus": "MAJORITY_AGREE",
+        "pollIntervalMs": 400,
+        "note": "Observed client-side, polling gen_getTransactionStatus every ~400ms. Each duration therefore carries up to ~400ms of positive observation error."
+      }
+    }
+  ]
+}

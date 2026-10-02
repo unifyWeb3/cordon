@@ -1,7 +1,10 @@
-"use client";
-
 /**
  * Thin wrapper over genlayer-js so the rest of the app never imports the SDK directly.
+ *
+ * Deliberately NOT a "use client" module. It is imported by both the client page and the
+ * /case/[caseId] server component; marking it "use client" turns every export into a client
+ * reference, and the server component's call to readClient() then fails at render, which
+ * surfaces as a 404 from notFound(). Nothing in here touches the DOM or hooks.
  *
  * Notes on the stack:
  *  - `genlayer-js` is viem-based, so viem comes with it; wagmi is not required. Wallet
@@ -22,8 +25,25 @@ export const CHAIN_ID = Number(
   process.env.NEXT_PUBLIC_GENLAYER_CHAIN_ID ?? "61999"
 );
 
-export const CONTRACT_ADDRESS = (process.env.NEXT_PUBLIC_HALT_ADDRESS ??
-  "0x0000000000000000000000000000000000000000") as Address;
+/**
+ * No silent fallback to the zero address.
+ *
+ * `next build` succeeds without `NEXT_PUBLIC_HALT_ADDRESS` set, so a zero-address default turns
+ * a configuration mistake into a page that renders cleanly and reads nothing -- the worst
+ * possible failure, because it looks like the product is empty rather than misconfigured.
+ * Throwing at module load turns it into an error you cannot miss.
+ */
+const rawAddress = process.env.NEXT_PUBLIC_HALT_ADDRESS;
+
+if (!rawAddress || !/^0x[0-9a-fA-F]{40}$/.test(rawAddress)) {
+  throw new Error(
+    "NEXT_PUBLIC_HALT_ADDRESS is missing or malformed. Copy web/.env.example to web/.env.local " +
+      "and set it to the deployed Cordon contract. Refusing to fall back to the zero address: " +
+      "a page that reads nothing looks like an empty product rather than a broken setup.",
+  );
+}
+
+export const CONTRACT_ADDRESS = rawAddress as Address;
 
 export const TARGET_CHAIN_NAME =
   process.env.NEXT_PUBLIC_TARGET_CHAIN_NAME ?? "Base Sepolia";

@@ -31,7 +31,7 @@ Not studio-dev: contract execution is broken there (see below).
 | Contract lint + SDK validation | `.venv/bin/genvm-lint check contracts/emergency_halt.py` | **passed** (11 methods) |
 | Frontend types | `web/node_modules/.bin/tsc --noEmit` | **clean** |
 | Frontend build | `web/node_modules/.bin/next build` | **EXIT=0**, 4/4 pages static |
-| Live consensus | `deploy/submit_proof.py` | MAJORITY_AGREE on 3 live cases |
+| Live consensus | `deploy/submit_proof.py` | 6 live runs, all MAJORITY_AGREE. **One equivocated**: `live-drain`'s tx re-run rotated 4x and landed `INSUFFICIENT_EVIDENCE` vs `FALSE_REPORT` first time, on a byte-identical digest. R2 reproduces on borderline evidence. |
 
 Suite runtime is ~82s rather than ~25s because an unrelated Rust build on the shared host is
 loading the CPU. Test count and behaviour are unchanged.
