@@ -1,31 +1,45 @@
 # Left off — next action
 
-Updated 2026-10-02.
+Updated 2026-10-03.
 
-## Status: built and verified, not submitted. Do not submit yet.
+## Status: deployed, public, verified in production. Not submitted.
 
-`M0-RUBRIC-SELF-REVIEW.md` recommends holding, for two reasons, both cheap to close.
+Live: <https://cordon-oxunify.vercel.app> · Repo: <https://github.com/unifyWeb3/cordon> (public)
+Contract: `0x37E08A26…74b` on Studionet (61999). Target: `0xDF9Ba466…2cb32b7B` on Base Sepolia.
 
-## Next step (do these first)
+Verified against the deployed URL, not inferred from a build: `/` 200, `/case/live-drain-run2` 200
+with the live verdict and rationale, unknown case id 404. Evidence and the three deploy blockers are
+in `state/reviews/2026-10-03-vercel-deploy/DEPLOY-VERIFICATION.md`.
 
-1. **Deploy `demo-target/HaltablePool.sol`** to Base Sepolia, then adjudicate a real tx against
-   it, so the EVM emit is observed rather than assumed. This is the single biggest open gap:
-   the product's headline is a freeze reaching a target, and that hop is unverified.
-   - `deploy/README.md` §5 and `docs/integration.md` §5 have the watcher fallback if emit turns
-     out to be unavailable.
-2. **M9**: record a short demo and post it. Rubric: *"live demos, videos, and public posts
-   earn extra points and speed up review."*
-3. **Upgrade `next@15.1.6`** in `web/package.json` — npm flags CVE-2025-66478 for it. Not done
-   because installs on this host are slow (~26 min).
-4. **Re-check studio-dev.** It is the brief's target and may recover; `deploy_studio_dev.py`
-   still targets it by default and needs no changes.
+## Closed since the last handoff
 
-## Only then
+- `HaltablePool.sol` deployed to Base Sepolia; the freeze hop is observed, not assumed.
+- Next.js 15.1.6 → 15.5.27 (was `severity=critical` and was blocking Vercel deploys outright).
+- Repo public, description set, pushed to `origin/main`.
+- Frontend rubric line promoted to Met after the operator loaded the app.
 
-Submit. Portal requires: repo verified via GitHub OAuth `[A11]`, and submission notes written
-against the exact three-part instruction — *what it does, the problem it solves, and how to use
-it* `[A6]`. Read the form first: no authenticated session has ever been available from this
-environment, so its required fields are unverified.
+## Next step
+
+1. **M9 — demo video.** The app self-animates: the hero replays a recorded run on load, so the
+   video is largely "open the URL and narrate". A screen recording of the production URL is the
+   deliverable; it cannot be produced from this environment.
+2. **Submit.** Portal needs the repo verified via GitHub OAuth `[A11]` (now possible — the repo is
+   public) and notes answering exactly three things: what it does, the problem it solves, how to
+   use it `[A6]`. No authenticated portal session has ever been available here, so the form's
+   required fields are still unverified — read the form before writing the notes.
+
+## Open, and worth knowing before the video
+
+- **`genlayer-py` cannot read a live contract that `genlayer-js` reads fine** (reproduced twice).
+  This weakens the `deploy/freeze_watcher.py` delivery-path claim in `docs/integration.md` §5 and the
+  README. The earlier "read + write proven live" evidence was not re-confirmed in this session. The
+  frontend claim is unaffected. Do not demo the watcher without re-proving it first.
+- **Browser write path still unexercised.** `submit_proof` through the UI has never been watched to
+  FINALIZED, so "Complete source code and accurate docs" stays `PARTIALLY MET`. This is the one
+  rubric line still open, and it is cheap: connect a funded Studionet wallet and submit.
+- No live `CONFIRMED_EXPLOIT` case exists. Every live case is `FALSE_REPORT` or
+  `INSUFFICIENT_EVIDENCE`, which is the correct verdict for random public transactions. The
+  hermetic suite covers the arming path. Manufacturing a fake drain was rejected — do not.
 
 ## Do not
 
@@ -33,3 +47,5 @@ environment, so its required fields are unverified.
 - Do not claim this beats Kelp's 46-minute response. It does not.
 - Do not imply paying demand. No protocol team has been asked.
 - Do not `git add .env` — it is gitignored and has never been committed; keep it that way.
+- Do not share `cordon.vercel.app`. That is an unrelated project called *Condor Gaming*; Vercel
+  subdomains are globally unique so the short name was never available.

@@ -47,6 +47,39 @@ Each of these is a case where the published docs are wrong or incomplete, verifi
 | Hosted networks reject `getContractSchemaForCode`. | genlayer-py ships a hosted-Studio client purely for schema lookup. |
 | studio-dev is fee-charging. | Txs need a fee distribution + non-zero `feeValue`. No published Python SDK encodes that ABI; see `deploy/fees_aware.py`. |
 
+## The two SDKs disagree about whether a live contract exists
+
+Verified 2026-10-03, reproduced twice, same endpoint and same chain both times.
+
+- `genlayer-py` 0.18.0 → `gen_call failed (code=-32001): Contract 0x37E08A26… not found`
+- `genlayer-js` 1.1.8 → reads it, returns real verdicts (confirmed in production)
+
+Ruled out as causes: wrong RPC (`genlayer_py.chains.studionet`'s endpoint is byte-identical to
+`GENLAYER_STUDIO_RPC`), wrong chain (61999 both), missing contract (the JS client reads it), and
+wrong address (the deployed app reads it through the same address).
+
+**Never conclude "the contract is gone" from a Python SDK `gen_call` failure.** Cross-check with
+`genlayer-js` or the deployed app before believing it. This is the same failure class as the
+`emit()` no-ops: a call whose return value contradicts the target. Full detail in
+`state/reviews/2026-10-03-vercel-deploy/DEPLOY-VERIFICATION.md`.
+
+## Vercel: read `readyState`, not the CLI's exit code
+
+`vercel deploy` reported `Error: fetch failed` on every attempt, including attempts that had
+actually succeeded. The real state is only in the deployments API (`readyState` =
+`READY` / `ERROR` / `BLOCKED`) or the `vercel ls` table. Two blockers hid behind that one useless
+error message: a commit author Vercel could not resolve to a GitHub account, and a critical
+Next.js advisory.
+
+The commit author Vercel accepts is the **email on the Vercel account** (`oxunifyy` →
+`akoladefatoki108@gmail.com`), not the GitHub noreply address. Those are different identities:
+`unifyWeb3@users.noreply.github.com` resolved fine and was then rejected for lacking deploy
+permission on the team.
+
+Also: project-level `ssoProtection` was `all_except_custom_domains`, which puts a login wall in
+front of every URL. A "public demo" needs it cleared per project. And `cordon.vercel.app` belongs
+to an unrelated project — the real URL is `cordon-oxunify.vercel.app`.
+
 ## Anti-equivocation technique (the core of the design)
 
 Leader and validators fetch independently, so only fields that are fixed for a given transaction
