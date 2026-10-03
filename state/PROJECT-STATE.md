@@ -15,7 +15,7 @@ Updated 2026-10-02. Repo: `/home/unify/mys` (git initialised during this build, 
 | M5 demo target | **partial** | `demo-target/HaltablePool.sol` written, **not deployed** |
 | M6 adversarial script | **done** | `deploy/submit_proof.py`, `tests/direct/fixtures.py` |
 | M7 docs | **done** | `README.md`, `docs/integration.md`, `deploy/README.md` |
-| M8 rubric self-review | **done** | `M0-RUBRIC-SELF-REVIEW.md` — recommendation: **do not submit yet** |
+| M8 rubric self-review | **done** | `M0-RUBRIC-SELF-REVIEW.md` — 7 lines Met, 1 partially, 1 weak, 1 not done |
 | M9 demo video + post | **not started** | — |
 
 ## Deployed
@@ -30,6 +30,7 @@ Not studio-dev: contract execution is broken there (see below).
 | Hermetic suite | `.venv/bin/python -m pytest tests/direct/ -q` | **38 passed** in 81.88s |
 | Contract lint + SDK validation | `.venv/bin/genvm-lint check contracts/emergency_halt.py` | **passed** (11 methods) |
 | Frontend types | `web/node_modules/.bin/tsc --noEmit` | **clean** |
+| Frontend rendered | operator loaded the running app, 2026-10-03 | **confirmed** |
 | Frontend build | `web/node_modules/.bin/next build` | **EXIT=0**, 4/4 pages static |
 | Live consensus | `deploy/submit_proof.py` | 6 live runs, all MAJORITY_AGREE. **One equivocated**: `live-drain`'s tx re-run rotated 4x and landed `INSUFFICIENT_EVIDENCE` vs `FALSE_REPORT` first time, on a byte-identical digest. R2 reproduces on borderline evidence. |
 
