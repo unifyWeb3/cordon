@@ -1,0 +1,6 @@
+# Vercel uploads the directory as-is; without this it would ship 300+ MB of node_modules.
+node_modules
+.next
+.env
+.env.local
+.env.*.local
