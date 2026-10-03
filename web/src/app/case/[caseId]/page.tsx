@@ -1,15 +1,67 @@
+import Link from "next/link";
 import { notFound } from "next/navigation";
-import { CONTRACT_ADDRESS, TARGET_CHAIN_EXPLORER, readClient } from "@/lib/genlayer";
+import { CONTRACT_ADDRESS, TARGET_CHAIN_EXPLORER } from "@/lib/genlayer";
+import { readCase } from "@/lib/chain";
 import type { Proof } from "@/lib/types";
 
 /**
  * A shareable per-case artefact: one link that shows a single verdict with its evidence.
  *
- * force-dynamic is required. Without it Next prerenders this route at build time, which means a
- * network call during the build -- the build then fails whenever the RPC is slow or down, for a
- * page whose whole purpose is to show live chain state.
+ * force-dynamic, so the build never makes a network call — a build-time RPC call fails the whole
+ * build whenever the endpoint is slow or rate limiting, which is not a build's problem to have.
+ * Caching and retry live in readCase() instead.
  */
 export const dynamic = "force-dynamic";
+
+function VerdictPill({ verdict }: { verdict: string }) {
+  const colour =
+    verdict === "CONFIRMED_EXPLOIT"
+      ? ["var(--v-confirmed)", "var(--v-confirmed-bg)"]
+      : verdict === "FALSE_REPORT"
+        ? ["var(--v-false)", "var(--v-false-bg)"]
+        : ["var(--v-insufficient)", "var(--v-insufficient-bg)"];
+  return (
+    <span className="pill" style={{ background: colour[1], color: colour[0] }}>
+      {verdict}
+    </span>
+  );
+}
+
+/**
+ * A read that failed for a reason other than "no such case".
+ *
+ * Rendering 404 here would be a lie: the case may well exist, the endpoint is just refusing to
+ * answer right now. Saying so is more useful than a dead end, and it keeps a shared-endpoint
+ * outage from masquerading as a broken product.
+ */
+function Unreachable({ kind, message }: { kind: string; message: string }) {
+  return (
+    <main>
+      <Link href="/" className="sub" style={{ fontSize: "var(--t-xs)" }}>
+        &larr; all cases
+      </Link>
+      <section className="card" style={{ marginTop: 22, borderColor: "#3a3320" }}>
+        <div className="eyebrow" style={{ color: "var(--v-insufficient)" }}>
+          {kind === "rate-limited" ? "Chain endpoint rate limited" : "Could not reach the chain"}
+        </div>
+        <h1 style={{ fontSize: "var(--t-xl)", marginTop: 10 }}>
+          This case exists, we just could not fetch it.
+        </h1>
+        <p className="sub" style={{ marginTop: 12, maxWidth: 640, color: "var(--text-2)" }}>
+          {kind === "rate-limited"
+            ? "studio.genlayer.com limits requests per minute and is shared between everyone. This is not a missing case — reload in a few seconds."
+            : "The read did not complete. Reload, or read the same record directly from the contract."}
+        </p>
+        <p className="mono sub" style={{ marginTop: 14, fontSize: "var(--t-xs)" }}>
+          contract {CONTRACT_ADDRESS}
+        </p>
+        <p className="mono sub" style={{ fontSize: "var(--t-xs)" }}>
+          detail: {message.slice(0, 200)}
+        </p>
+      </section>
+    </main>
+  );
+}
 
 export default async function CasePage({
   params,
@@ -17,25 +69,18 @@ export default async function CasePage({
   params: Promise<{ caseId: string }>;
 }) {
   const { caseId } = await params;
+  const res = await readCase(caseId);
 
-  let proof: Proof;
-  try {
-    proof = (await readClient().readContract({
-      address: CONTRACT_ADDRESS,
-      functionName: "get_evidence",
-      args: [caseId],
-    })) as unknown as Proof;
-  } catch {
-    notFound();
+  if (!res.ok) {
+    // A real 404, with a real HTTP status. This is the only path allowed to claim absence.
+    if (res.kind === "unknown-case") notFound();
+    // Everything else renders. Telling someone a case does not exist when it does is the one
+    // failure a shareable link cannot recover from.
+    return <Unreachable kind={res.kind} message={res.message} />;
   }
 
+  const proof = res.value as Proof;
   const e = proof.evidence;
-  const colour =
-    proof.verdict === "CONFIRMED_EXPLOIT"
-      ? ["var(--v-confirmed)", "var(--v-confirmed-bg)"]
-      : proof.verdict === "FALSE_REPORT"
-        ? ["var(--v-false)", "var(--v-false-bg)"]
-        : ["var(--v-insufficient)", "var(--v-insufficient-bg)"];
 
   const rows: [string, string][] = [
     ["Transaction found", e.tx_found ? "yes" : "no"],
@@ -49,18 +94,17 @@ export default async function CasePage({
 
   return (
     <main>
-      <a href="/" className="sub" style={{ fontSize: "var(--t-xs)" }}>&#8592; all cases</a>
+      <Link href="/" className="sub" style={{ fontSize: "var(--t-xs)" }}>
+        &larr; all cases
+      </Link>
 
       <header style={{ marginTop: 18 }}>
         <div className="eyebrow">Cordon &#183; adjudicated freeze</div>
-        <h1 style={{ fontSize: "var(--t-2xl)", marginTop: 10 }} className="mono">
+        <h1 className="mono" style={{ fontSize: "var(--t-2xl)", marginTop: 10 }}>
           {proof.case_id}
         </h1>
-        <span
-          className="pill"
-          style={{ background: colour[1], color: colour[0], marginTop: 14 }}
-        >
-          {proof.verdict}
+        <span style={{ display: "inline-block", marginTop: 14 }}>
+          <VerdictPill verdict={proof.verdict} />
         </span>
       </header>
 

@@ -23,6 +23,7 @@ import { HeroRun } from "@/components/HeroRun";
 import { Problem, How, Transport, Nav } from "@/components/Problem";
 import { Pivot } from "@/components/Pivot";
 import { Providers } from "./providers";
+import { refetchPolicy } from "@/lib/chain";
 
 const DEFAULT_CASE = "live-drain-run2";
 
@@ -43,6 +44,9 @@ function useStats() {
         functionName: "stats",
         args: [],
       })) as unknown as ContractStats,
+    // Never auto-refetch: a finalized verdict does not change, and this read was the single
+    // largest consumer of the endpoint's per-minute budget.
+    refetchInterval: refetchPolicy.stats,
   });
 }
 
@@ -55,6 +59,7 @@ function useCases() {
         functionName: "list_cases",
         args: [],
       })) as unknown as string[],
+    refetchInterval: refetchPolicy.cases,
   });
 }
 
@@ -68,6 +73,7 @@ function useProof(caseId: string | null) {
         functionName: "get_evidence",
         args: [caseId as string],
       })) as unknown as Proof,
+    refetchInterval: refetchPolicy.proof,
   });
 }
 

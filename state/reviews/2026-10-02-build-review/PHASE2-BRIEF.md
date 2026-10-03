@@ -312,3 +312,13 @@ of the seventh. Corrected in place rather than quietly dropped.
 2. **The replay cannot show `CONFIRMED_EXPLOIT`.** No live case has reached it, and manufacturing
    one would be dishonest. All three enum values are styled distinctly and the console exposes
    whatever verdict arrives; the landing copy says so rather than implying coverage we do not have.
+
+
+### Follow-up (2026-10-03): the rate-limit defect
+
+`state/reviews/2026-10-03-phase2-review/PHASE2-REVIEW.md`. The review found `/case/[caseId]`
+returning 404 for cases that exist, because a shared-endpoint rate limit was being reported as
+"not found". Fixed in three parts: the landing page's 4s polling (45 reads/min against a 30/min
+budget) was the root cause and is now near-static; transport failures render an honest page instead
+of a 404; and existence is checked against `list_cases` because the contract's `UserError` string is
+stripped before it reaches the client.
