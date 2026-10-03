@@ -16,7 +16,8 @@ Updated 2026-10-02. Repo: `/home/unify/mys` (git initialised during this build, 
 | M6 adversarial script | **done** | `deploy/submit_proof.py`, `tests/direct/fixtures.py` |
 | M7 docs | **done** | `README.md`, `docs/integration.md`, `deploy/README.md` |
 | M8 rubric self-review | **done** | `M0-RUBRIC-SELF-REVIEW.md` — 7 lines Met, 1 partially, 1 weak, 1 not done |
-| M9 demo video + post | **not started** | — |
+| M9 demo video | **done** | `demo/cordon-demo.mp4` (41s, silent) via `scripts/make_demo_video.py` |
+| M9 public post | **not started** | needs your account; `docs/SUBMISSION.md` is drafted |
 
 ## Deployed
 
@@ -31,6 +32,9 @@ Not studio-dev: contract execution is broken there (see below).
 | Contract lint + SDK validation | `.venv/bin/genvm-lint check contracts/emergency_halt.py` | **passed** (11 methods) |
 | Frontend types | `web/node_modules/.bin/tsc --noEmit` | **clean** |
 | Frontend rendered | operator loaded the running app, 2026-10-03 | **confirmed** |
+| Production deploy | cordon-oxunify.vercel.app, readyState=READY | **confirmed** |
+| Production read | /case/live-drain-run2 200 + live verdict | **confirmed** |
+| Demo video | 41.2s, 1600x900, 1101 frames | **rendered + spot-checked** |
 | Frontend build | `web/node_modules/.bin/next build` | **EXIT=0**, 4/4 pages static |
 | Live consensus | `deploy/submit_proof.py` | 6 live runs, all MAJORITY_AGREE. **One equivocated**: `live-drain`'s tx re-run rotated 4x and landed `INSUFFICIENT_EVIDENCE` vs `FALSE_REPORT` first time, on a byte-identical digest. R2 reproduces on borderline evidence. |
 
