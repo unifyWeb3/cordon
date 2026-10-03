@@ -340,10 +340,3 @@ contract, all passing — but React rendering and the write path were never obse
 was connected to this environment, so the authenticated Explorer could not be enumerated. Web
 search found no existing GenLayer emergency-halt or circuit-breaker project. Treat this as
 "no evidence of prior art," not "confirmed none."
-
-## Licensing note
-
-The BuildersClaw repository has **no license file**, so it is used here as a *pattern
-reference only*. No code from it is copied or vendored. The consensus pattern
-(`run_nondet_unsafe` + compare-only-the-enum) is re-implemented from the published GenLayer
-Partial Field Matching documentation.
