@@ -37,8 +37,13 @@ if (!rawRpc || !/^https?:\/\//.test(rawRpc)) {
 
 export const RPC_URL = rawRpc;
 
+/**
+ * Chain id, defaulting to the SDK's own Studionet definition rather than a literal written here.
+ * Deriving it means the default cannot drift from the chain `genlayer-js` is actually configured
+ * for, and no chain id has to be committed as a magic number.
+ */
 export const CHAIN_ID = Number(
-  process.env.NEXT_PUBLIC_GENLAYER_CHAIN_ID ?? "61999"
+  process.env.NEXT_PUBLIC_GENLAYER_CHAIN_ID ?? studionet.id
 );
 
 /**
@@ -82,9 +87,9 @@ export const TARGET_CHAIN_EXPLORER =
  */
 export const chain = studionet;
 
-if (CHAIN_ID !== 61999) {
+if (CHAIN_ID !== chain.id) {
   throw new Error(
-    `This app only supports Studionet (chain 61999). NEXT_PUBLIC_GENLAYER_CHAIN_ID is ` +
+    `This app only supports Studionet (chain ${chain.id}). NEXT_PUBLIC_GENLAYER_CHAIN_ID is ` +
       `${CHAIN_ID}, and genlayer-js@1.1.8 has no constant for it. See web/package.json for ` +
       `why the SDK is pinned, and deploy/README.md for the studio-dev findings.`,
   );
