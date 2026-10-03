@@ -98,8 +98,23 @@ export function readClient() {
 /** A 32-byte GenLayer transaction id, lower-cased for consistent comparisons. */
 export type TxId = string;
 
-export const txLink = (id: TxId) =>
-  `https://genlayer-explorer.vercel.app/transactions/${id}`;
+/**
+ * Public Studionet block explorer, as listed in GenLayer's own network docs for chain 61999.
+ *
+ * This replaced `genlayer-explorer.vercel.app`, which now returns HTTP 503 and was rendering as a
+ * dead "explorer" link on the tracked transaction. Verified: /tx/<hash> and /address/<addr> both
+ * resolve on the replacement. Note the path is /tx/, and the contract page is /address/<addr>
+ * even though /contracts/<addr> redirects there.
+ *
+ * Hardcoded on purpose, matching TARGET_CHAIN_EXPLORER below: a wrong explorer URL yields a dead
+ * link, not a wrong verdict, so it does not need the fail-loud treatment the RPC and contract
+ * address get.
+ */
+export const GENLAYER_EXPLORER = "https://explorer-studio.genlayer.com";
+
+export const txLink = (id: TxId) => `${GENLAYER_EXPLORER}/tx/${id}`;
+
+export const addressLink = (addr: string) => `${GENLAYER_EXPLORER}/address/${addr}`;
 
 export function isRealAddress(a: string): boolean {
   return /^0x[0-9a-fA-F]{40}$/.test(a);
