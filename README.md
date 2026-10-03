@@ -13,6 +13,10 @@ discrete verdict:
 | `FALSE_REPORT` | Nothing happens. The evidence contradicted the claim. |
 | `INSUFFICIENT_EVIDENCE` | Nothing happens. No receipt, or nothing unambiguous to judge. |
 
+**Live app:** <https://cordon-oxunify.vercel.app> — reads the deployed contract on GenLayer
+Studionet (chain 61999). Shareable case links: `/case/<caseId>`. The headline case is
+[`/case/live-drain-run2`](https://cordon-oxunify.vercel.app/case/live-drain-run2).
+
 ---
 
 ## The trust problem this addresses
