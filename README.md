@@ -17,6 +17,11 @@ discrete verdict:
 Studionet (chain 61999). Shareable case links: `/case/<caseId>`. The headline case is
 [`/case/live-drain-run2`](https://cordon-oxunify.vercel.app/case/live-drain-run2).
 
+**Demo video:** [`demo/cordon-demo.mp4`](demo/cordon-demo.mp4) — 41 s, silent. It is a rendered
+walkthrough of the live deployment, including the adjudicated-run replay and the shareable case
+page. Regenerate with `python scripts/make_demo_video.py` (needs playwright, ffmpeg, and a
+chromium already on disk); `--check` reports what is missing.
+
 ---
 
 ## The trust problem this addresses
