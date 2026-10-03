@@ -18,8 +18,24 @@ import { createClient } from "genlayer-js";
 import { studionet } from "genlayer-js/chains";
 import type { Address } from "viem";
 
-export const RPC_URL =
-  process.env.NEXT_PUBLIC_GENLAYER_RPC ?? "https://studio.genlayer.com/api";
+/**
+ * No hardcoded endpoint fallback.
+ *
+ * A committed `.env` value -- even a public RPC URL -- is still a committed `.env` value, and a
+ * default here means a misconfigured deployment silently talks to an endpoint nobody chose. The
+ * address below already throws for the same reason; the endpoint should behave the same way.
+ */
+const rawRpc = process.env.NEXT_PUBLIC_GENLAYER_RPC;
+
+if (!rawRpc || !/^https?:\/\//.test(rawRpc)) {
+  throw new Error(
+    "NEXT_PUBLIC_GENLAYER_RPC is missing. Copy web/.env.example to web/.env.local and set it. " +
+      "There is deliberately no hardcoded default: a silent fallback means a misconfigured " +
+      "deployment talks to an endpoint nobody chose.",
+  );
+}
+
+export const RPC_URL = rawRpc;
 
 export const CHAIN_ID = Number(
   process.env.NEXT_PUBLIC_GENLAYER_CHAIN_ID ?? "61999"
