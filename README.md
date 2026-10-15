@@ -213,6 +213,16 @@ Hermetic by construction: the web fetch and the model are both mocked from recor
 The model stand-in keys off the *observed evidence in the prompt*, so if the contract ever
 stopped passing evidence through, the patterns would stop matching and the tests would fail.
 
+The suite pins the GenVM bundle to `v0.2.16` (`SDK_VERSION` in `tests/direct/conftest.py`).
+That is the last release publishing `genvm-universal.tar.xz`; upstream renamed the asset to
+`genvm-runners-all.tar.xz` at `v0.3.0-rc0`, and `genlayer-test` 0.28.0 hardcodes the old name, so
+a `v0.3.0-rc*` pin 404s. The consequence: **the hermetic gate runs on an older GenVM bundle than
+Studionet does.** The runner hash the contract pins and the std-lib hash it resolves to were
+verified byte-identical between v0.2.16 and v0.3.0-rc7, so what is under test is unchanged — but
+the bundle is genuinely older. `genlayer-test` 0.30.0rc2 fixes the filename and adds
+`GENVM_VERSION` / `GENVM_PREBUILT_DIR`; adopting it is a deliberate follow-up, not a drive-by,
+because it is a pre-release, moves the bundle to `genvm-manager`, and re-pins `genlayer-py`.
+
 What the hermetic gate proves, and what it does not:
 
 - **Proves:** the enum is correct per fixture; the validator agrees (`vm.run_validator()`);

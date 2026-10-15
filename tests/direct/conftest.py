@@ -18,12 +18,10 @@ CONTRACT = "contracts/emergency_halt.py"
 
 # Pin the GenVM SDK version explicitly.
 #
-# Without this, gltest picks the lexicographically newest tarball in its cache. Running
-# `genvm-lint check` drops symlinks named after the *linter's* bundle versions into that same
-# cache directory, so the "newest" entry silently becomes a bundle with a different internal
-# layout and every test fails with "No py-genlayer runners found in tarball". Pinning makes the
-# suite independent of whatever else is lying around in ~/.cache.
-SDK_VERSION = "v0.3.0-rc7"
+# v0.2.16 is the last release that publishes genvm-universal.tar.xz; upstream renamed that asset
+# to genvm-runners-all.tar.xz at v0.3.0-rc0, and genlayer-test 0.28.0 hardcodes the old name, so
+# any v0.3.0-rc* pin 404s on download.
+SDK_VERSION = "v0.2.16"
 OWNER = "0x" + "aa" * 20
 SUBMITTER = "0x" + "bb" * 20
 TARGET = "0x" + "22" * 20
