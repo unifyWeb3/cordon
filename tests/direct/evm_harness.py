@@ -13,8 +13,15 @@ Toolchain
 `solc-static-linux` binary is amd64-only and this project is developed and tested on
 linux/aarch64, where it cannot execute at all.
 
-If the compiler is missing the tests SKIP, loudly and by name. A skip is reported in the run
-summary; it is never a silent pass.
+Two failure modes are kept apart on purpose, because collapsing them is how a run ends up
+green while verifying nothing:
+
+  * **No compiler on the machine** -> ``SolcMissing``, and the tests SKIP, by name, with the
+    one command that fixes it. Skipping is a deliberate trade: requiring node for a Python
+    suite is real friction. It is not a quiet trade -- ``conftest.py`` fails the session on
+    an unaccepted skip, see ``pytest_sessionfinish`` there.
+  * **Compiler present and it refused the source** -> ``SolcCompileFailed``, which is a hard
+    error and never a skip. Broken Solidity must not be able to turn the run green.
 """
 
 from __future__ import annotations
@@ -34,7 +41,7 @@ from eth_utils import keccak, to_checksum_address
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOLC_BIN = ROOT / "demo-target" / "node_modules" / ".bin" / "solcjs"
 POOL_SOURCE = ROOT / "demo-target" / "src" / "HaltablePool.sol"
-ARTIFACT_STEM = ROOT / "demo-target" / "out" / "src_HaltablePool_sol_HaltablePool"
+HARNESS_OUT = ROOT / "demo-target" / "out" / "harness"
 
 SKIP_REASON = (
     "solc-js is not installed, so HaltablePool.sol CANNOT be compiled or executed and the "
@@ -43,8 +50,12 @@ SKIP_REASON = (
 )
 
 
-class SolcUnavailable(RuntimeError):
-    """Raised when no usable Solidity compiler is present."""
+class SolcMissing(RuntimeError):
+    """No Solidity compiler is present at all. Tests skip, and the session says so."""
+
+
+class SolcCompileFailed(RuntimeError):
+    """A compiler is present and it would not produce a usable artifact. Never a skip."""
 
 
 def find_solc() -> str:
@@ -53,29 +64,57 @@ def find_solc() -> str:
     found = shutil.which("solcjs")
     if found:
         return found
-    raise SolcUnavailable(SKIP_REASON)
+    raise SolcMissing(SKIP_REASON)
 
 
-def compile_pool(force: bool = False) -> tuple[list, str]:
-    """Compile `HaltablePool.sol` -> (abi, bytecode-hex). Cached by solc's own `out/`."""
-    abi_path = ARTIFACT_STEM.with_suffix(".abi")
-    bin_path = ARTIFACT_STEM.with_suffix(".bin")
+def compile_pool() -> tuple[list, str]:
+    """Compile `HaltablePool.sol` -> (abi, bytecode-hex).
 
-    if force or not abi_path.exists() or not bin_path.exists():
-        ARTIFACT_STEM.parent.mkdir(parents=True, exist_ok=True)
-        result = subprocess.run(
-            [find_solc(), "--bin", "--abi", "--optimize",
-             "-o", str(ARTIFACT_STEM.parent), str(POOL_SOURCE)],
-            capture_output=True,
-            text=True,
+    Recompiles on every call, into a directory this harness owns and empties first. Both
+    halves of that sentence are load-bearing, and both were learned by watching this file
+    lie:
+
+      * **The artifact name is never guessed.** `solcjs` names its output after the source
+        path it was handed, *relative to the current directory*. Invoked from the repo root
+        with `demo-target/src/HaltablePool.sol` it writes
+        `demo-target_src_HaltablePool_sol_HaltablePool.abi`; invoked from inside
+        `demo-target/` with `src/HaltablePool.sol` it writes
+        `src_HaltablePool_sol_HaltablePool.abi`. So a harness that hardcodes one of those
+        names finds nothing in a clean checkout -- and, worse, *does* find the artifact left
+        behind by `npm run build`, runs old bytecode, and reports a successful execution of
+        a contract it never compiled. That is exactly the defect class `AGENTS.md` warns
+        about, and this file had it. Now: empty the directory, run solc, take whatever
+        single artifact appears, and fail loudly if it is not exactly one of each.
+      * **Compiling unconditionally** means an edited `.sol` can never be tested through a
+        stale artifact. It costs a few seconds once per session.
+    """
+    if HARNESS_OUT.exists():
+        shutil.rmtree(HARNESS_OUT)
+    HARNESS_OUT.mkdir(parents=True, exist_ok=True)
+
+    result = subprocess.run(
+        [find_solc(), "--bin", "--abi", "--optimize",
+         "-o", str(HARNESS_OUT), str(POOL_SOURCE)],
+        capture_output=True,
+        text=True,
+        cwd=str(ROOT),
+    )
+
+    abi_files = sorted(HARNESS_OUT.glob("*.abi"))
+    bin_files = sorted(HARNESS_OUT.glob("*.bin"))
+    if result.returncode != 0 or len(abi_files) != 1 or len(bin_files) != 1:
+        produced = ", ".join(sorted(p.name for p in HARNESS_OUT.iterdir())) or "nothing"
+        raise SolcCompileFailed(
+            f"solc did not produce exactly one artifact for HaltablePool.sol "
+            f"(exit={result.returncode}, abi={len(abi_files)}, bin={len(bin_files)}, "
+            f"produced: {produced})\n"
+            f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
         )
-        if result.returncode != 0 or not abi_path.exists():
-            raise SolcUnavailable(
-                f"solc failed to compile HaltablePool.sol:\n"
-                f"{result.stdout}\n{result.stderr}"
-            )
 
-    return json.loads(abi_path.read_text()), bin_path.read_text().strip()
+    bytecode = bin_files[0].read_text().strip()
+    if not bytecode:
+        raise SolcCompileFailed(f"solc produced an empty bytecode file: {bin_files[0].name}")
+    return json.loads(abi_files[0].read_text()), bytecode
 
 
 class Pool:
@@ -264,13 +303,24 @@ def deployment_revert_reason(tester: EthereumTester, abi: list, bytecode: str,
 # --------------------------------------------------------------------- fixtures
 
 
+# Set to a reason string when the whole module skipped for want of a compiler, so
+# `conftest.pytest_sessionfinish` can refuse to call that run green.
+SOLC_SKIPPED: str | None = None
+
+
 @pytest.fixture(scope="session")
 def pool_artifact():
-    """(abi, bytecode). Skips the whole module if no compiler is available."""
+    """(abi, bytecode). Skips the whole module, but only if there is no compiler at all.
+
+    `SolcCompileFailed` is deliberately not caught: a compiler that is present and refuses
+    the source is a broken contract, and it must be an error.
+    """
+    global SOLC_SKIPPED
     try:
         return compile_pool()
-    except SolcUnavailable as exc:
-        pytest.skip(str(exc), allow_module_level=True)
+    except SolcMissing as exc:
+        SOLC_SKIPPED = str(exc)
+        pytest.skip(str(exc))
 
 
 @pytest.fixture

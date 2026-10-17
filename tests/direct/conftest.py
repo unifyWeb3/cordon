@@ -160,3 +160,34 @@ def contract_module(direct_deploy):
 		sdk_version=SDK_VERSION,
 	)
 	return sys.modules["_contract_emergency_halt"]
+
+
+def pytest_sessionfinish(session, exitstatus):
+	"""Refuse to let a run read as green when the EVM tests skipped.
+
+	`test_haltable_pool.py` and `test_attestation_digest.py` compile and *execute*
+	`HaltablePool.sol` on a real EVM. They are the only thing standing behind the claim that
+	the freeze path works at all. Without solc they skip, and the summary reads
+	"N passed, 38 skipped" -- which reads as a pass while the contract's entire
+	authentication path went unverified.
+
+	This repository exists because of calls that report success while doing nothing, so the
+	default here is to fail. If node genuinely cannot be installed on the machine, set
+	`CORDON_ALLOW_SKIP_NO_SOLC=1`; the skip is then accepted, on the record.
+	"""
+	import os
+
+	harness = sys.modules.get("evm_harness")
+	if harness is None or not getattr(harness, "SOLC_SKIPPED", None):
+		return
+	if os.environ.get("CORDON_ALLOW_SKIP_NO_SOLC"):
+		print("\nEVM TESTS SKIPPED, accepted via CORDON_ALLOW_SKIP_NO_SOLC=1: "
+		      f"{harness.SOLC_SKIPPED}")
+		return
+	print(
+		"\nFAILING THIS SESSION: the EVM tests skipped, so the freeze path is UNVERIFIED "
+		"and this run must not be reported as green.\n"
+		f"  {harness.SOLC_SKIPPED}\n"
+		"  Set CORDON_ALLOW_SKIP_NO_SOLC=1 to accept the skip and exit 0."
+	)
+	session.exitstatus = pytest.ExitCode.TESTS_FAILED
