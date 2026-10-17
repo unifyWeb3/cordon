@@ -371,6 +371,11 @@ pool with the relay key as `owner`, so the gas payer can end a freeze early and 
 Deploy with a different `owner` (or `transferOwnership`) if you do not want that either — the
 attested entry point is permissionless, so the relay needs no authority to deliver a freeze.
 
+A live deadline can also be **shortened** by a second attestation naming a *nearer* expiry — a later
+one is refused as `cannot extend a live freeze`. Nothing anywhere can push a deadline out, which is
+the property that matters: even a compromised attester cannot keep a freeze running past what a
+signature said.
+
 ### Also broken in the pinned SDK
 
 `.view()` / `EthCall` raises `AttributeError` on every call:

@@ -309,6 +309,20 @@ want the gas payer to hold even that, deploy the pool with a different `owner` (
 `transferOwnership` afterwards): `freezeFromAttestation` is permissionless, so the relay needs no
 authority at all to deliver a freeze.
 
+**Two paths shorten a live deadline, and both are deliberate.** `frozenUntil` can go *down* in two
+ways, never up:
+
+* a second attestation with a **nearer** `expiresAt` replaces a live freeze — the check quoted above
+  is `expiresAt <= frozenUntil`, so a later deadline is refused ("cannot extend a live freeze") and
+  a nearer one is accepted. That is what lets a milder, more recent adjudication supersede a harsher
+  one without waiting for the window to lapse
+  (`test_a_live_freeze_may_be_shortened`, `test_reapplying_the_same_attestation_is_idempotent`);
+* `unfreeze` zeroes it, as above.
+
+Nothing anywhere can push a deadline *out*. If your threat model includes "the attester is
+compromised", note that the compromise can end a freeze early, and still cannot keep one running
+past what a signature said.
+
 If you want to do the last hop yourself, the inputs are all public and need no privileged GenLayer
 access:
 
