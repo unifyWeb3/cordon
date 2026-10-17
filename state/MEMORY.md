@@ -32,8 +32,14 @@ refuses any chain but localnet, so the method has to be called directly.
 `CORDON_ATTESTER_PRIVATE_KEY`, `CORDON_ATTESTER_ADDRESS`, `BASE_SEPOLIA_PRIVATE_KEY`,
 `BASE_SEPOLIA_RPC_URL`. Throwaway, testnet only, never printed, logged or committed.
 
-**Blocked.** Base Sepolia deployer balance is **0** — one `eth_getBalance`, HTTP 200, result `0x0`.
-Per the user's rule: no polling, no retry loop, no faucet automation.
+**Blocked.** Base Sepolia deployer balance is **0**. Checked twice — once before reporting, once
+after the user replied "funded" — one `eth_getBalance` each time, HTTP 200, result `0x0` both times.
+The endpoint was validated in the same pass instead of being assumed: `eth_chainId` → `0x14a34`
+(Base Sepolia 84532), `eth_blockNumber` → `48248784`, and the previous target `0xDF9Ba466…2cb32b7B`
+returns 3,149 bytes of code — so the RPC is reading the real chain, and the zero is real. The ETH
+did not arrive at `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc`. Per the user's rule: no polling, no
+retry loop, no faucet automation. Next session: confirm which address was actually funded before
+doing anything else.
 
 **Exact next step.** Fund `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc` with Base Sepolia ETH and
 reply "funded". Then: (1) check the balance once; (2) deploy the pool with `attesters_ =
