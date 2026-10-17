@@ -942,29 +942,77 @@ def test_build_attestation_refuses_an_unparseable_expiry_without_a_clock(pool_ad
 # ------------------------------------------------------- the deadline conversion, once more
 
 
-def test_iso_to_epoch_refuses_what_the_contract_would_silently_shift(contract_module):
-    """A sub-second timestamp carrying an offset: refused here, silently shifted there.
+@pytest.mark.parametrize(
+    "stamp",
+    [
+        "2026-10-17T09:00:00Z",           # the shape the contract writes
+        "2026-10-17T09:00:00.987654Z",    # sub-second, which is what a node hands back
+        "2026-10-17T09:00:00",            # no zone at all: both sides read it as UTC
+        "2026-10-17T09:00:00+02:00",      # an explicit offset, no fraction
+        "2026-10-17T09:00:00.123+02:00",  # the offset WITH sub-second precision
+        "2026-10-17T09:00:00.123",        # sub-second, no zone
+    ],
+)
+def test_iso_to_epoch_and_the_contract_agree_on_every_timestamp_shape(contract_module, stamp):
+    """`iso_to_epoch` must return exactly what the contract's `_epoch` returns, for every shape.
 
-    `_strip_us` drops everything after the dot, so `...:00.123+02:00` loses its offset and the
-    remainder is read as UTC -- two hours out. The contract only ever writes `...Z`, so a record
-    cannot carry this shape. The point of the test is that the two implementations must not
-    quietly agree on a deadline neither should sign: `iso_to_epoch` refuses, and the
-    contract-side behaviour is recorded here as a reported defect rather than mirrored. A future
-    "fix" that copies `_strip_us` into `iso_to_epoch` fails loudly on this line.
+    This replaced a divergence test. `_strip_us` used to drop the zone together with the
+    fraction, so `...:00.123+02:00` became `...:00Z` -- two hours from the instant it spells.
+    The attester signs the value `iso_to_epoch` produces, so a shift there is a signed deadline
+    the record does not mean. Both sides now keep the zone, and agreement is asserted on the
+    shapes either could see rather than argued from the ones a test happened to pick.
+    """
+    assert iso_to_epoch(stamp) == contract_module._epoch(stamp)
+
+
+def test_a_zone_that_follows_the_fraction_moves_the_instant(contract_module):
+    """The regression itself: the zone is folded in, not discarded with the fraction.
+
+    `...09:00:00.123+02:00` names 07:00Z. Reading it as 09:00Z is the silent two-hour shift the
+    old `split(".", 1)[0]` performed, and the assertions below fail if either side returns to it.
     """
     shifted = "2026-10-17T09:00:00.123+02:00"
 
-    with pytest.raises(ValueError) as exc:
-        iso_to_epoch(shifted)
-    assert "offset" in str(exc.value)
+    assert contract_module._strip_us(shifted) == "2026-10-17T09:00:00+02:00"
+    assert contract_module._epoch(shifted) == iso_to_epoch("2026-10-17T07:00:00Z")
+    assert iso_to_epoch(shifted) == iso_to_epoch("2026-10-17T07:00:00Z")
+    assert contract_module._epoch(shifted) != iso_to_epoch("2026-10-17T09:00:00Z")
 
-    # What the contract does with the same string: drops `123+02:00`, calls 09:00 UTC, when the
-    # string names 07:00Z.
-    assert contract_module._epoch(shifted) == iso_to_epoch("2026-10-17T09:00:00Z")
-    assert contract_module._epoch(shifted) != iso_to_epoch("2026-10-17T07:00:00Z")
 
-    # And the shape that *does* occur (sub-second, no offset) still truncates, both sides alike.
-    assert iso_to_epoch("2026-10-17T09:00:00.987Z") == contract_module._epoch("2026-10-17T09:00:00.987Z")
+@pytest.mark.parametrize(
+    "stamp,expected",
+    [
+        ("2026-10-17T09:00:00Z", "2026-10-17T09:00:00Z"),
+        ("2026-10-17T09:00:00.987654Z", "2026-10-17T09:00:00Z"),
+        ("2026-10-17T09:00:00.987654", "2026-10-17T09:00:00Z"),
+        ("2026-10-17T09:00:00", "2026-10-17T09:00:00Z"),
+        ("2026-10-17T09:00:00+02:00", "2026-10-17T09:00:00+02:00"),
+        ("2026-10-17T09:00:00.987654+02:00", "2026-10-17T09:00:00+02:00"),
+    ],
+)
+def test_strip_us_keeps_the_zone_and_drops_only_the_fraction(contract_module, stamp, expected):
+    """Byte-identical to the old behaviour wherever the old behaviour was right, and idempotent.
+
+    `_strip_us` is applied to values that have already been through it, so a second pass must
+    change nothing -- including the passes that now carry an offset instead of a `Z`.
+    """
+    assert contract_module._strip_us(stamp) == expected
+    assert contract_module._strip_us(expected) == expected
+
+
+def test_the_window_comparison_orders_by_instant_and_not_by_text(contract_module):
+    """Keeping the zone exposed a second place that had assumed a trailing `Z`.
+
+    `_iso_le` compared the stripped strings as text. `...10:00:00+02:00` *is* 08:00Z, which is
+    after `...07:30:00Z`, but as text it sorts before. On a node-provided clock carrying an
+    offset that decides whether a freeze is still live, so the offset is folded in first. The
+    `Z`-against-`Z` path -- which is every `expires_at`, since `_iso_shift` always emits `Z` --
+    is unchanged.
+    """
+    assert contract_module._iso_le("2026-10-17T07:30:00Z", "2026-10-17T10:00:00+02:00") is True
+    assert contract_module._iso_le("2026-10-17T07:30:00Z", "2026-10-17T06:00:00+02:00") is False
+    assert contract_module._iso_le("2026-10-17T07:30:00Z", "2026-10-17T07:30:00Z") is True
+    assert contract_module._iso_le("2026-10-17T07:30:00.500Z", "2026-10-17T07:30:00Z") is True
 
 
 def test_attestation_offers_no_v_normalising_helper():

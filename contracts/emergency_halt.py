@@ -203,9 +203,29 @@ def _iso_shift(iso: str, seconds: int) -> str:
 	return base.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _iso_key(iso: str) -> str:
+	"""UTC, second-resolution form of an ISO-8601 stamp, for comparison rather than display.
+
+	`expires_at` is always `_iso_shift` output and already ends in `Z`, so for it this is the
+	identity and the comparison below stays a plain string comparison. A *node-provided* stamp
+	may carry an offset instead, and `...10:00:00+02:00` does not sort against `...07:30:00Z`
+	the way the two instants do -- so once `_strip_us` keeps a zone (it must: dropping it is
+	what silently moved the instant), the offset has to be folded in before anything is ordered,
+	or a freeze ends at the wrong moment.
+
+	Unparseable input raises here. Comparing unparseable stamps as text, which is what the
+	previous version did, is a coin flip rather than a deadline, and the flip decides whether
+	the pool is paused.
+	"""
+	stripped = _strip_us(iso)
+	if stripped.endswith("Z"):
+		return stripped
+	return _iso_shift(stripped, 0)
+
+
 def _iso_le(a: str, b: str) -> bool:
-	"""ISO-8601 UTC strings sort lexicographically once microseconds are stripped."""
-	return _strip_us(a) <= _strip_us(b)
+	"""ISO-8601 stamps, ordered by the instant they name rather than by their text."""
+	return _iso_key(a) <= _iso_key(b)
 
 
 def _window_closed(expires_at: str) -> bool:
@@ -220,12 +240,26 @@ def _window_closed(expires_at: str) -> bool:
 
 
 def _strip_us(iso: str) -> str:
-	"""Drop sub-second precision and normalise to a trailing Z.
+	"""Drop sub-second precision, keeping whatever zone follows it.
 
 	Idempotent on purpose: this is applied to values that have already been through it, and an
 	implementation that unconditionally appended "Z" would turn `...:48Z` into `...:48ZZ`.
+
+	The zone is NOT part of the fraction. `iso.split(".", 1)[0]` dropped both at once, so
+	`2026-10-17T09:00:00.123+02:00` lost its offset, gained a `Z`, and named an instant two
+	hours away from the one it spells -- a wrong deadline, silently, in a contract whose whole
+	job is deadlines. Only the run of digits directly after the dot is sub-second precision;
+	anything after those digits is the zone and survives verbatim.
+
+	The result is therefore not always `...Z`. Anything that *orders* these strings must go
+	through `_iso_key`; parsing them is fine either way.
 	"""
-	head = iso.split(".", 1)[0]
+	head, dot, tail = iso.partition(".")
+	if dot:
+		digits = 0
+		while digits < len(tail) and tail[digits].isdigit():
+			digits += 1
+		head += tail[digits:]
 	if head.endswith("Z") or "+" in head:
 		return head
 	return head + "Z"

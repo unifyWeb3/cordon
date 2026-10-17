@@ -105,17 +105,35 @@ Leader and validators fetch independently, so only fields that are fixed for a g
 raw bodies. Kept: input selector, event-topic counts, value band, log band, receipt status.
 There is a test asserting byte-identical digests for the same tx with different block/gas.
 
-## Timestamp parsing: `_strip_us` shifts a sub-second stamp that carries an offset (open)
+## Timestamp parsing: the zone is not part of the fraction (fixed 2026-10-17)
 
-`contracts/emergency_halt.py::_strip_us` does `text.split(".", 1)[0]`, i.e. it discards
-*everything* after the dot. That is right for `2026-10-17T09:00:00.123Z` (truncation) and wrong
-for `2026-10-17T09:00:00.123+02:00`: the offset goes with the fraction, `"+" in head` is then
-False, `Z` is appended, and the instant silently moves by two hours. Verified 2026-10-17 with
-`.venv/bin/python -m pytest tests/direct/test_relay_attestation.py -k silently_shift`, which also
-asserts the shift. It cannot arrive from a record, because `_iso_shift` always emits `...Z` — so
-this is latent, not live. NOT patched: the deliverable is under review, and `deploy/attestation.py
-::iso_to_epoch` must agree with `_strip_us` on every shape that can occur. `iso_to_epoch` instead
-**refuses** the ambiguous shape, so the two cannot quietly agree on a deadline neither should sign.
+`contracts/emergency_halt.py::_strip_us` used to do `text.split(".", 1)[0]`, i.e. it discarded
+*everything* after the dot. Right for `2026-10-17T09:00:00.123Z` (truncation), wrong for
+`2026-10-17T09:00:00.123+02:00`: the offset goes with the fraction, `"+" in head` was then False,
+`Z` was appended, and the instant silently moved by two hours. Only the run of digits directly
+after the dot is sub-second precision — anything after those digits is the zone and now survives.
+`deploy/attestation.py::iso_to_epoch` uses the same rule, because the attester *signs* the value it
+returns, and a two-hour shift there is a signed deadline the record does not mean.
+
+Two things this exposed, both fixed in the same commit:
+
+- **Anything that orders these strings must fold the zone in first.** `_iso_le` compared stripped
+  strings as text; `...10:00:00+02:00` is 08:00Z, which is after `...07:30:00Z`, but sorts before
+  it. `_iso_key` now normalises to UTC via `_iso_shift(stripped, 0)` before comparing, and raises
+  on unparseable input instead of comparing garbage as text. Every `expires_at` already ends in
+  `Z` (`_iso_shift` emits nothing else), so the `Z`-against-`Z` path is byte-identical to before.
+- The divergence test became an agreement test. The lesson to keep: when one implementation
+  refuses a shape the other mis-reads, that is a *stopgap*, not a fix — a review that leaves it
+  there should say "temporary" out loud.
+
+Evidence: `tests/direct/test_relay_attestation.py -k "timestamp_shape or follows_the_fraction or
+zone_and_drops or orders_by_instant"`. The old behaviour is pinned as wrong:
+`_epoch("...09:00:00.123+02:00") != iso_to_epoch("...09:00:00Z")`.
+
+Still true, and now the *only* shape both sides refuse (loudly, not silently): a zone written with
+a minus, e.g. `...09:00:00.123-05:00`. Neither implementation recognises `-` as a zone marker — the
+rule is `endswith("Z") or "+" in head` — so both append a `Z` and then fail to parse. Nothing in
+the pipeline emits one; if a node ever does, it fails loudly on both sides rather than disagreeing.
 
 ## A refusal path that raises is not a refusal path
 

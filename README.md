@@ -180,7 +180,7 @@ deploy/attest.py                 signs one adjudicated freeze (the only attester
 deploy/freeze_watcher.py         verifies and relays a signed freeze (holds no attester key)
 demo-target/src/HaltablePool.sol the EVM target: attestation-only pause, self-lifting expiry
 docs/integration.md              how another protocol plugs this in
-tests/direct/                    hermetic suite: 185 tests, no network
+tests/direct/                    hermetic suite: 198 tests, no network
 web/                             Next.js 15 frontend (landing narrative + console)
 web/src/lib/content.ts           every user-visible string and number, no JSX literals
 web/src/lib/sample-run.json      a real recorded adjudication, timings included
@@ -209,7 +209,7 @@ while the deploy scripts want a current SDK — see `deploy/README.md`.
 
 ## Tests
 
-`uv run pytest tests/direct/ -v` → **185 passed**. ~45s on an idle machine; budget a few
+`uv run pytest tests/direct/ -v` → **198 passed**. ~75s on an idle machine; budget a few
 minutes if something else is loading the box. The test count is the stable number, not the
 wall clock.
 
@@ -328,7 +328,7 @@ Full evidence: `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`.
 
 ### So the last hop is off-chain, and here is the honest cost
 
-The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 185
+The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 198
 hermetic tests plus live consensus runs. **Delivery of the freeze to an EVM contract is not**,
 and since 2026-10-17 the contract no longer attempts it: the `emit` calls were **removed** rather
 than left in place, so nothing in the contract can report a delivery that did not happen.

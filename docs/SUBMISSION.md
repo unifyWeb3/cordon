@@ -61,7 +61,7 @@ it is tier-2 judgement for ambiguous cases. Pair it with one.
 adjudication recorded against the deployed contract on GenLayer Studionet (chain 61999), and every
 case has a shareable link at `/case/<caseId>`.
 
-**Run the tests.** The contract is hermetic — 185 tests, no network:
+**Run the tests.** The contract is hermetic — 198 tests, no network:
 
 ```bash
 uv sync

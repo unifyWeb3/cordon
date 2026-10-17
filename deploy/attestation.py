@@ -170,29 +170,23 @@ def iso_to_epoch(iso: str) -> int:
     `tests/direct/test_relay_attestation.py`.
 
     Handles the shape the contract emits (`2026-10-17T09:00:00Z`, second resolution), the
-    sub-second shape a node may hand back, and an explicit numeric offset. Sub-second precision
-    is truncated rather than rounded, for the same reason `_strip_us` truncates: agreement
-    matters more than precision.
+    sub-second shape a node may hand back, an explicit numeric offset, and the two together.
+    Sub-second precision is truncated rather than rounded, for the same reason `_strip_us`
+    truncates: agreement matters more than precision.
 
-    ONE SHAPE IS REFUSED RATHER THAN TRUNCATED. `_strip_us` drops everything after the dot,
-    which is right for `...:00.123Z` and WRONG for `...:00.123+02:00`: the offset goes with the
-    fraction, the remainder is then read as UTC, and the instant silently shifts by two hours.
-    The contract carries the same defect, and it cannot arise from a record because the contract
-    only ever writes `...Z`. A signature over a deadline must never rest on a guess, so this
-    refuses that shape and names the contract-side divergence instead of quietly disagreeing
-    with it -- pinned by `test_iso_to_epoch_refuses_what_the_contract_would_silently_shift`.
+    The zone that follows the fraction is KEPT, not discarded with it. Dropping both is what
+    made `...:00.123+02:00` name an instant two hours from the one it spells -- and since the
+    attester signs the value this returns, that was a signed deadline the record did not mean.
+    The rule here is now the same rule as `_strip_us`, and agreement is asserted on every shape
+    either side can see: `test_iso_to_epoch_and_the_contract_agree_on_every_timestamp_shape`.
     """
     text = iso.strip()
-    head, sep, fraction = text.partition(".")
-    if sep:
-        rest = fraction.lstrip("0123456789")
-        if rest and rest != "Z":
-            raise ValueError(
-                f"sub-second timestamp carrying an offset is not handled: {iso!r}. "
-                f"emergency_halt._strip_us would discard {rest!r} together with the fraction "
-                "and then treat what remains as UTC, moving the instant; refusing rather than "
-                "signing a deadline the record may not mean."
-            )
+    head, dot, tail = text.partition(".")
+    if dot:
+        digits = 0
+        while digits < len(tail) and tail[digits].isdigit():
+            digits += 1
+        head += tail[digits:]
     if not (head.endswith("Z") or "+" in head):
         head += "Z"
     return int(datetime.fromisoformat(head.replace("Z", "+00:00")).timestamp())
