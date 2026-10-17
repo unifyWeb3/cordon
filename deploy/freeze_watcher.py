@@ -90,6 +90,21 @@ class RefusedToBroadcast(RuntimeError):
     """The attestation does not describe what the chain currently says. Do not send."""
 
 
+def _norm_or_refuse(value: str, what: str) -> str:
+    """Normalised address, or a refusal.
+
+    `normalize_address` raises `ValueError` on a malformed string, and `verify` is called from
+    `main` inside a handler for `RefusedToBroadcast` only. So a malformed address in the record
+    or -- more to the point -- in the *attestation file*, which is just a file an operator was
+    handed, would escape as a ValueError traceback: the relay would look broken instead of
+    saying "this attestation is not valid". A refusal path that crashes is not a refusal path.
+    """
+    try:
+        return normalize_address(value)
+    except ValueError as exc:
+        raise RefusedToBroadcast(f"{what} is not an address: {value!r}") from exc
+
+
 def selector(sig: str) -> str:
     return keccak(text=sig)[:4].hex()
 
@@ -111,14 +126,37 @@ class Evm:
         self.nonce = int(self._call("eth_getTransactionCount", [self.account.address, "latest"]), 16)
 
     def _call(self, method: str, params: list):
-        resp = requests.post(
-            self.rpc,
-            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
-            timeout=40,
-        ).json()
-        if resp.get("error"):
-            raise RuntimeError(f"{method}: {resp['error']}")
-        return resp.get("result")
+        """One JSON-RPC request. Every wire failure becomes a `RuntimeError` that names it.
+
+        The common real-world failure is a wrong endpoint -- a stale value in the environment,
+        a proxy, a captive portal answering with HTML -- and `requests` reports all of them as
+        a JSONDecodeError, or as an AttributeError from `.get` on a non-dict body. Both escaped
+        `main` as a traceback, which tells an operator nothing about which setting is wrong.
+        """
+        try:
+            payload = requests.post(
+                self.rpc,
+                json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params},
+                timeout=40,
+            ).json()
+        except requests.exceptions.JSONDecodeError as exc:
+            # Must be caught BEFORE RequestException: requests' JSONDecodeError inherits from
+            # BOTH ValueError and RequestException, so the transport branch would swallow it and
+            # report a bad body as a network fault. The same trap was already fixed once in
+            # genlayer_read.py; it was left standing here.
+            raise RuntimeError(f"{method}: the endpoint did not answer with JSON: {exc}") from exc
+        except requests.RequestException as exc:
+            raise RuntimeError(f"{method}: transport failure: {exc}") from exc
+        except ValueError as exc:
+            raise RuntimeError(f"{method}: the endpoint did not answer with JSON: {exc}") from exc
+
+        if not isinstance(payload, dict):
+            raise RuntimeError(
+                f"{method}: malformed JSON-RPC envelope ({type(payload).__name__})"
+            )
+        if payload.get("error"):
+            raise RuntimeError(f"{method}: {payload['error']}")
+        return payload.get("result")
 
     @property
     def chain_id(self) -> int:
@@ -218,10 +256,13 @@ def verify(
     if not record.get("frozen"):
         raise RefusedToBroadcast("record is not frozen")
 
-    recorded_target = str(record.get("target") or "")
-    if normalize_address(recorded_target) != normalize_address(claimed_target):
+    recorded_target = _norm_or_refuse(
+        str(record.get("target") or ""), "the record's target"
+    )
+    claim = _norm_or_refuse(claimed_target, "--target")
+    if recorded_target != claim:
         raise RefusedToBroadcast(
-            f"record names target {recorded_target}, but this run is for {claimed_target}"
+            f"record names target {record.get('target')!r}, but this run is for {claimed_target}"
         )
 
     evidence = record.get("evidence") or {}
@@ -230,10 +271,10 @@ def verify(
     tx_to = str(evidence.get("tx_to") or "")
     if not tx_to:
         raise RefusedToBroadcast("evidence records no transaction destination")
-    if normalize_address(tx_to) != normalize_address(recorded_target):
+    if _norm_or_refuse(tx_to, "the record's evidence.tx_to") != recorded_target:
         raise RefusedToBroadcast(
             f"the fetched transaction went to {tx_to}, not to the recorded target "
-            f"{recorded_target}: not evidence about this pool"
+            f"{record.get('target')}: not evidence about this pool"
         )
 
     # --- the document must agree with the record
@@ -244,7 +285,7 @@ def verify(
             f"attestation is for case {document.get('case_id')!r}, record is "
             f"{record.get('case_id')!r}"
         )
-    if normalize_address(str(document.get("target", ""))) != normalize_address(recorded_target):
+    if _norm_or_refuse(str(document.get("target", "")), "the attestation's target") != recorded_target:
         raise RefusedToBroadcast("attestation names a different target than the record")
     if document.get("verdict") != CONFIRMED_EXPLOIT or document.get("finalized") is not True:
         raise RefusedToBroadcast("attestation does not state a finalized CONFIRMED_EXPLOIT")
@@ -283,12 +324,14 @@ def verify(
             "signature is not acceptable: wrong length, non-canonical `s`, or v outside "
             "{27,28} -- the pool would reject it too"
         )
-    if document.get("signer") and normalize_address(str(document["signer"])) != normalize_address(signer):
+    if document.get("signer") and _norm_or_refuse(
+        str(document["signer"]), "the attestation's signer"
+    ) != normalize_address(signer):
         raise RefusedToBroadcast(
             f"attestation claims signer {document.get('signer')} but the signature recovers "
             f"to {signer}"
         )
-    expected = {normalize_address(a) for a in expected_attesters if a}
+    expected = {_norm_or_refuse(a, "a configured attester") for a in expected_attesters if a}
     if not expected:
         raise RefusedToBroadcast(
             f"no expected attester configured -- set {ATTESTER_ADDRESS_ENV} or pass --attester"
@@ -391,12 +434,31 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     document = json.loads(Path(args.attestation).read_text())
-    evm = Evm(evm_rpc, key)
+
+    # The whole pre-flight reads the target chain, so any of it can fail on a bad endpoint. It
+    # is reported rather than raised: an operator debugging a traceback cannot tell a wrong URL
+    # from a wrong key from a chain that is down.
+    try:
+        evm = Evm(evm_rpc, key)
+    except ValueError as exc:
+        print(f"BASE_SEPOLIA_PRIVATE_KEY is not a usable key: {exc}", file=sys.stderr)
+        return 2
+    except RuntimeError as exc:
+        print(f"target chain unusable: {exc}", file=sys.stderr)
+        return 2
+
+    try:
+        chain_id = evm.chain_id
+        already_frozen = evm.is_frozen(args.target)
+        current_until = evm.frozen_until(args.target)
+    except RuntimeError as exc:
+        print(f"target chain unusable: {exc}", file=sys.stderr)
+        return 2
 
     print(f"halt contract : {args.address}")
     print(f"target        : {args.target}")
-    print(f"target chain  : {evm.chain_id}")
-    print(f"target frozen : {evm.is_frozen(args.target)} (frozenUntil={evm.frozen_until(args.target)})")
+    print(f"target chain  : {chain_id}")
+    print(f"target frozen : {already_frozen} (frozenUntil={current_until})")
     print(f"mode          : {'DRY RUN' if args.dry_run else 'LIVE'}")
     print()
 
@@ -413,13 +475,19 @@ def main(argv: list[str] | None = None) -> int:
         return 2
 
     try:
+        chain_time = evm.block_time
+    except RuntimeError as exc:
+        print(f"target chain unusable: {exc}", file=sys.stderr)
+        return 2
+
+    try:
         verified = verify(
             record,
             document,
             claimed_target=args.target,
-            chain_id=evm.chain_id,
+            chain_id=chain_id,
             expected_attesters=expected,
-            now_epoch=evm.block_time,
+            now_epoch=chain_time,
         )
     except RefusedToBroadcast as exc:
         print(f"{args.case}: REFUSED -- {exc}", file=sys.stderr)

@@ -42,7 +42,11 @@ READ_SENDER = "0x" + "00" * 20
 
 
 class GenLayerReadError(RuntimeError):
-    """Any failure to obtain a decoded read result. Never returns a partial value."""
+    """Any failure to obtain a decoded read result. Never returns a partial value.
+
+    The endpoint value is deliberately NOT part of these messages: `AGENTS.md` forbids printing
+    a `.env` value, "public endpoints included", and the caller knows which endpoint it passed.
+    """
 
 
 def studionet_rpc_url() -> str:
@@ -107,20 +111,52 @@ class GenLayerReader:
             # when the endpoint actually returned HTML -- a captive portal, or the wrong URL.
             raise GenLayerReadError(f"{method}: non-JSON response: {exc}") from exc
         except requests.RequestException as exc:
+            # Covers connect failures AND timeouts (`ReadTimeout` is a `RequestException`).
             raise GenLayerReadError(f"{method}: transport failure: {exc}") from exc
         except ValueError as exc:
             raise GenLayerReadError(f"{method}: non-JSON response: {exc}") from exc
 
-        if isinstance(payload, dict) and payload.get("error"):
+        # Checked AFTER the body is parsed so a JSON-RPC error object can be quoted, which is
+        # the most useful part, and BEFORE the result is interpreted: without this, a 502 from a
+        # proxy -- very often a JSON body with no `result` -- is reported as "empty result",
+        # i.e. as a fact about the contract instead of about the connection.
+        if response.status_code >= 400:
+            detail = ""
+            if isinstance(payload, dict) and payload.get("error"):
+                detail = f": {json.dumps(payload['error'])}"
+            raise GenLayerReadError(
+                f"{method}: HTTP {response.status_code} from the endpoint{detail}"
+            )
+
+        if not isinstance(payload, dict):
+            raise GenLayerReadError(
+                f"{method}: malformed JSON-RPC envelope ({type(payload).__name__})"
+            )
+        if payload.get("error"):
             raise GenLayerReadError(f"{method}: {json.dumps(payload['error'])}")
 
-        result = payload.get("result") if isinstance(payload, dict) else None
+        result = payload.get("result")
         if result is None:
             # genlayer-py surfaces this exact shape when the node cannot see the contract.
             # Report it as itself rather than letting it read as "contract has no cases".
-            raise GenLayerReadError(f"{method}: empty result from {self.rpc_url}")
+            raise GenLayerReadError(
+                f"{method}: the endpoint returned no result (an absent `result` is not an "
+                "empty answer; the Python SDK reports a live contract this way -- see "
+                "state/MEMORY.md)"
+            )
 
         try:
-            return decode_result(result if isinstance(result, str) else "0x" + result)
+            decoded = decode_result(result if isinstance(result, str) else "0x" + result)
         except Exception as exc:  # noqa: BLE001
             raise GenLayerReadError(f"{method}: undecodable result: {exc}") from exc
+
+        if decoded is None:
+            # The *other* spelling of "no value": a present-but-empty body. `decode_result`
+            # returns None for it, which is right for a pure decoder and wrong to hand back from
+            # a reader whose callers do `record["verdict"]` -- they would get a TypeError from a
+            # different module. One condition, one outcome.
+            raise GenLayerReadError(
+                f"{method}: the endpoint returned an empty value; refusing to report an empty "
+                "read as a result"
+            )
+        return decoded

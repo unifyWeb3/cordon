@@ -45,8 +45,9 @@ from evm_harness import (  # noqa: F401
     pool_artifact,
     relay,
 )
-from freeze_watcher import Evm, RefusedToBroadcast, broadcast, verify
-from rpc_stub import LocalRpc, py_evm_handler
+import attestation
+from freeze_watcher import Evm, RefusedToBroadcast, broadcast, main, verify
+from rpc_stub import LocalRpc, RawRpc, py_evm_handler
 
 CASE = "live-drain-run2"
 ROOT = Path(__file__).resolve().parent.parent.parent
@@ -581,6 +582,16 @@ def test_the_relay_and_the_pool_reject_the_same_signatures(evm, pool_artifact, a
     zero_v = bytearray(good)
     zero_v[64] = 0
 
+    # These two pass both cheap checks -- `v` is genuine, `s` is below the half-order -- and are
+    # refutable only by `ecrecover` itself, which returns the zero address for them. They are the
+    # only inputs that exercise the `signer != address(0)` clause, so without them the guard is
+    # present but unproven.
+    zero_r = bytearray(good)
+    zero_r[:32] = b"\x00" * 32
+
+    zero_s = bytearray(good)
+    zero_s[32:64] = b"\x00" * 32
+
     cases = {
         "genuine": good,
         "short": good[:64],
@@ -588,6 +599,8 @@ def test_the_relay_and_the_pool_reject_the_same_signatures(evm, pool_artifact, a
         "v=0": bytes(zero_v),
         "high-s": bytes(high_s),
         "all-zero": b"\x00" * 65,
+        "r=0": bytes(zero_r),
+        "s=0": bytes(zero_s),
     }
 
     for label, signature in cases.items():
@@ -601,6 +614,11 @@ def test_the_relay_and_the_pool_reject_the_same_signatures(evm, pool_artifact, a
             f"{label}: relay accepted={relay_accepted} but pool accepted={pool_accepted} "
             f"(pool said {reason!r})"
         )
+        if label in ("r=0", "s=0"):
+            # An unmarshallable signature must fail as "not an attester", not as a panic: the
+            # pool has no way to distinguish a malformed one from a foreign one, and a revert
+            # string that pretended otherwise would misreport what it checked.
+            assert reason == "unknown attester", f"{label}: pool said {reason!r}"
 
     assert recover_signer(digest, good) is not None, "the genuine signature must be accepted"
 
@@ -794,3 +812,271 @@ def test_the_deploy_path_only_uses_the_attested_entry_point():
     assert "freezeFromAttestation" in relay_source
     assert "FREEZE_SIG" not in relay_source, "the old owner-only call constant is still defined"
     assert 'freeze(string,uint256)"' not in relay_source
+
+
+# ------------------------------------------------- refusals that used to raise instead
+
+
+@pytest.mark.parametrize("field", ["signer", "target"])
+def test_verify_refuses_a_malformed_address_in_the_attestation_file(pool_address, field):
+    """The attestation file is the untrusted input in this path: it is a document handed over.
+
+    `normalize_address` raises `ValueError` on a malformed string, and `main` handles
+    `RefusedToBroadcast` only. So before this was fixed a junk field escaped as a traceback and
+    the relay said "this tool is broken" where the true answer was "this attestation is not
+    valid". A refusal path that crashes is not a refusal path.
+    """
+    key = "0x" + "21" * 32
+    record = make_record(pool_address, DEFINED_LATER)
+    document = _document(pool_address, record, key)
+    real_signer = document["signer"]
+
+    document[field] = "not-an-address"
+
+    with pytest.raises(RefusedToBroadcast) as exc:
+        verify(
+            record,
+            document,
+            claimed_target=pool_address,
+            chain_id=1,
+            expected_attesters=[real_signer],
+            now_epoch=LONG_AGO,
+        )
+    assert "is not an address" in str(exc.value)
+
+
+def test_verify_refuses_a_malformed_configured_attester(pool_address):
+    """`--attester` / CORDON_ATTESTER_ADDRESS is operator input, and it is normalised too."""
+    key = "0x" + "22" * 32
+    record = make_record(pool_address, DEFINED_LATER)
+    document = _document(pool_address, record, key)
+
+    with pytest.raises(RefusedToBroadcast) as exc:
+        verify(
+            record,
+            document,
+            claimed_target=pool_address,
+            chain_id=1,
+            expected_attesters=["0xnothex"],
+            now_epoch=LONG_AGO,
+        )
+    assert "configured attester" in str(exc.value)
+
+
+def test_verify_refuses_a_malformed_target_in_the_record(pool_address):
+    """A record's `target` is whatever a submitter stored in GenLayer, so it is not trusted.
+
+    The document here was minted for a *good* record that has since been replaced -- which is
+    exactly the case the target check exists for, and the one that used to raise `ValueError`
+    out of the check whose whole job is to refuse.
+    """
+    key = "0x" + "23" * 32
+    good = make_record(pool_address, DEFINED_LATER)
+    document = _document(pool_address, good, key)
+    record = make_record(pool_address, DEFINED_LATER, target="0xdeadbeef")
+
+    with pytest.raises(RefusedToBroadcast) as exc:
+        verify(
+            record,
+            document,
+            claimed_target=pool_address,
+            chain_id=1,
+            expected_attesters=[document["signer"]],
+            now_epoch=LONG_AGO,
+        )
+    assert "is not an address" in str(exc.value)
+
+
+def test_build_attestation_refuses_a_malformed_target_instead_of_raising(pool_address):
+    """The attester's gate must *refuse*: `attestation_digest` would raise `ValueError` later.
+
+    Before this, a claimed target that was not an address skipped the gate as "no reason to
+    refuse" and then blew up inside the encoder. A crash on the way to signing is the one
+    outcome an attester must never produce.
+    """
+    key = "0x" + "24" * 32
+
+    with pytest.raises(RefusedToSign) as exc:
+        build_attestation(
+            make_record(pool_address, DEFINED_LATER),
+            "0xdeadbeef",
+            chain_id=1,
+            verifying_contract=pool_address,
+            private_key=key,
+        )
+    assert "not an address" in str(exc.value)
+
+    with pytest.raises(RefusedToSign) as exc:
+        build_attestation(
+            make_record(pool_address, DEFINED_LATER, target="zz"),
+            pool_address,
+            chain_id=1,
+            verifying_contract=pool_address,
+            private_key=key,
+        )
+    assert "not an address" in str(exc.value)
+
+
+def test_build_attestation_refuses_an_unparseable_expiry_without_a_clock(pool_address):
+    """`--skip-window-check` is the one path where the gate does not parse `expires_at`.
+
+    The gate only parses the expiry when it has a clock, so this conversion was the only thing
+    left that could fail -- and it failed with a `ValueError` traceback instead of a refusal.
+    `main` reports refusals; it does not report crashes.
+    """
+    key = "0x" + "25" * 32
+    record = make_record(pool_address, DEFINED_LATER, expires_at="not-a-timestamp")
+
+    with pytest.raises(RefusedToSign) as exc:
+        build_attestation(
+            record,
+            pool_address,
+            chain_id=1,
+            verifying_contract=pool_address,
+            private_key=key,
+            now_epoch=None,
+        )
+    assert "not parseable" in str(exc.value)
+
+
+# ------------------------------------------------------- the deadline conversion, once more
+
+
+def test_iso_to_epoch_refuses_what_the_contract_would_silently_shift(contract_module):
+    """A sub-second timestamp carrying an offset: refused here, silently shifted there.
+
+    `_strip_us` drops everything after the dot, so `...:00.123+02:00` loses its offset and the
+    remainder is read as UTC -- two hours out. The contract only ever writes `...Z`, so a record
+    cannot carry this shape. The point of the test is that the two implementations must not
+    quietly agree on a deadline neither should sign: `iso_to_epoch` refuses, and the
+    contract-side behaviour is recorded here as a reported defect rather than mirrored. A future
+    "fix" that copies `_strip_us` into `iso_to_epoch` fails loudly on this line.
+    """
+    shifted = "2026-10-17T09:00:00.123+02:00"
+
+    with pytest.raises(ValueError) as exc:
+        iso_to_epoch(shifted)
+    assert "offset" in str(exc.value)
+
+    # What the contract does with the same string: drops `123+02:00`, calls 09:00 UTC, when the
+    # string names 07:00Z.
+    assert contract_module._epoch(shifted) == iso_to_epoch("2026-10-17T09:00:00Z")
+    assert contract_module._epoch(shifted) != iso_to_epoch("2026-10-17T07:00:00Z")
+
+    # And the shape that *does* occur (sub-second, no offset) still truncates, both sides alike.
+    assert iso_to_epoch("2026-10-17T09:00:00.987Z") == contract_module._epoch("2026-10-17T09:00:00.987Z")
+
+
+def test_attestation_offers_no_v_normalising_helper():
+    """The contract accepts `v` in {27,28} only. A helper that rewrites {0,1} into {27,28} invites
+    the relay to clear a signature the pool refuses -- divergent normalisation between the two
+    sides is this repo's recurring defect class.
+
+    `split_signature` did exactly that, had no callers, and also contradicted `recover_signer`
+    (which refuses the same input). It is gone; this keeps it gone. The rule itself is pinned by
+    `test_the_relay_and_the_pool_reject_the_same_signatures`.
+    """
+    assert not hasattr(attestation, "split_signature")
+    assert "v += 27" not in (ROOT / "deploy" / "attestation.py").read_text()
+
+
+# ------------------------------------------------------------- attaching to a real endpoint
+
+
+def test_the_relay_reports_an_unusable_target_rpc_instead_of_crashing():
+    """A wrong endpoint is the likeliest operator error, so it has to read like one.
+
+    `requests` reports HTML-from-a-proxy as a JSONDecodeError whose text names nothing useful,
+    and a non-object JSON body turned into an AttributeError from `.get`. Both reached the
+    operator as a traceback that pointed at neither the URL nor the key.
+    """
+    html = RawRpc(body=b"<html>wrong endpoint</html>", content_type="text/html")
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            Evm(html.url, "0x" + "0f" * 32)
+        assert "did not answer with JSON" in str(exc.value)
+    finally:
+        html.close()
+
+    envelope = RawRpc(body=b'["not", "an", "envelope"]')
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            Evm(envelope.url, "0x" + "0f" * 32)
+        assert "malformed JSON-RPC envelope" in str(exc.value)
+    finally:
+        envelope.close()
+
+    proxy = RawRpc(status=502, body=b'{"jsonrpc":"2.0","id":1,"error":{"message":"bad gateway"}}')
+    try:
+        with pytest.raises(RuntimeError) as exc:
+            Evm(proxy.url, "0x" + "0f" * 32)
+        assert "bad gateway" in str(exc.value), "the node's own error text is the useful part"
+    finally:
+        proxy.close()
+
+
+def test_main_reports_a_bad_target_rpc_instead_of_dumping_a_traceback(
+    tmp_path, monkeypatch, capsys
+):
+    """The same fix seen from the outside: exit code 2 and a sentence, not a stack trace."""
+    rpc = RawRpc(body=b"<html>proxy</html>", content_type="text/html")
+    attestation_file = tmp_path / "attestation.json"
+    attestation_file.write_text("{}")
+
+    monkeypatch.setenv("BASE_SEPOLIA_PRIVATE_KEY", "0x" + "0f" * 32)
+    monkeypatch.setenv("BASE_SEPOLIA_RPC_URL", rpc.url)
+    monkeypatch.setenv("CORDON_ATTESTER_ADDRESS", "0x" + "11" * 20)
+    try:
+        code = main(
+            [
+                "--case", CASE,
+                "--target", "0x" + "22" * 20,
+                "--attestation", str(attestation_file),
+            ]
+        )
+    finally:
+        rpc.close()
+
+    assert code == 2
+    assert "target chain unusable" in capsys.readouterr().err
+
+
+def test_the_relays_decision_ignores_the_documents_unsigned_fields(pool_address):
+    """`tx_hash`, `evidence_signature` and `created_at` are copied into the document and are NOT
+    covered by the signature. Nothing may depend on them.
+
+    Taking provenance from its own read of the record is the right design, but it has to be
+    pinned: a later version that printed `document["tx_hash"]` as "the transaction that
+    justified this freeze" would be presenting an unattested string as evidence. Tampering with
+    every unsigned field at once must leave the verified result byte-identical.
+    """
+    key = "0x" + "26" * 32
+    record = make_record(pool_address, DEFINED_LATER)
+    document = _document(pool_address, record, key)
+
+    baseline = verify(
+        record,
+        document,
+        claimed_target=pool_address,
+        chain_id=1,
+        expected_attesters=[document["signer"]],
+        now_epoch=LONG_AGO,
+    )
+
+    tampered = dict(document)
+    tampered["tx_hash"] = "0x" + "ff" * 32
+    tampered["evidence_signature"] = "0x" + "ee" * 65
+    tampered["created_at"] = "1999-01-01T00:00:00Z"
+    tampered["evidence_mode"] = "digest"
+    tampered["tx_to"] = "0x" + "33" * 20
+
+    after = verify(
+        record,
+        tampered,
+        claimed_target=pool_address,
+        chain_id=1,
+        expected_attesters=[document["signer"]],
+        now_epoch=LONG_AGO,
+    )
+    assert after == baseline
+    assert after["target"] == normalize_address(pool_address)

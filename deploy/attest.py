@@ -89,6 +89,20 @@ class RefusedToSign(RuntimeError):
     """The record is not attestable. Never sign a partial or qualified version of it."""
 
 
+def _address_or_none(value: str) -> str | None:
+    """Normalised address, or `None` when the string is not one.
+
+    `normalize_address` raises on a malformed value. That is right for a function whose caller
+    has already decided the input is an address, and wrong here: this is the gate, and a gate
+    that raises is a gate that reports "the tool is broken" when the correct answer is "this
+    record is not attestable". Downstream, `attestation_digest` would raise the same way.
+    """
+    try:
+        return normalize_address(value)
+    except ValueError:
+        return None
+
+
 def target_chain_now(rpc_url: str, timeout: int = 30) -> int:
     """Block timestamp of the target chain, NOT the host clock.
 
@@ -144,8 +158,18 @@ def refusal_reason(
     if not expires_at:
         return "record carries no expires_at"
 
+    claim = _address_or_none(claimed_target)
+    if claim is None:
+        return f"{claimed_target!r} is not an address, so there is nothing to bind to"
+
     recorded_target = str(record.get("target") or "")
-    if recorded_target.strip().lower() != claimed_target.strip().lower():
+    recorded = _address_or_none(recorded_target)
+    if recorded is None:
+        return (
+            f"record names target {recorded_target!r}, which is not an address; a signature "
+            "must bind a real pool, not a claim about one"
+        )
+    if recorded != claim:
         return (
             f"record names target {recorded_target!r}, which is not the pool being attested "
             f"({claimed_target})"
@@ -157,7 +181,13 @@ def refusal_reason(
     tx_to = str(evidence.get("tx_to") or "")
     if not tx_to:
         return "evidence records no transaction destination"
-    if tx_to.strip().lower() != claimed_target.strip().lower():
+    went_to = _address_or_none(tx_to)
+    if went_to is None:
+        return (
+            f"evidence records transaction destination {tx_to!r}, which is not an address, so "
+            "the target binding cannot be checked"
+        )
+    if went_to != recorded:
         return (
             f"the fetched transaction went to {tx_to!r}, not to {claimed_target}: a "
             "CONFIRMED_EXPLOIT on a transaction that never called this pool is not evidence "
@@ -198,7 +228,14 @@ def build_attestation(
 
     case_id = str(record["case_id"])
     expires_at = str(record["expires_at"]).strip()
-    expires_epoch = iso_to_epoch(expires_at)
+    try:
+        expires_epoch = iso_to_epoch(expires_at)
+    except ValueError as exc:
+        # `refusal_reason` only parses the expiry when it is given a clock, so this is the path
+        # that actually runs with `--skip-window-check`. Without it, an unparseable expiry
+        # escapes as a ValueError traceback instead of a refusal -- and a refusal is what
+        # `main` reports as "REFUSED to sign".
+        raise RefusedToSign(f"expires_at {expires_at!r} is not parseable: {exc}") from exc
 
     digest = attestation_digest(
         chain_id,
@@ -282,7 +319,10 @@ def main(argv: list[str] | None = None) -> int:
     ap.add_argument(
         "--skip-window-check",
         action="store_true",
-        help="do not consult the target chain's clock (offline use only)",
+        help=(
+            "do not consult the target chain's clock. Still needs BASE_SEPOLIA_RPC_URL, "
+            "because the chain id is part of what gets signed -- this is not an offline mode"
+        ),
     )
     args = ap.parse_args(argv)
 

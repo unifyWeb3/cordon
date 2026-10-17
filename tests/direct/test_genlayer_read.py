@@ -47,7 +47,7 @@ from genlayer_read import (
     encode_call,
     studionet_rpc_url,
 )
-from rpc_stub import LocalRpc, RpcError
+from rpc_stub import LocalRpc, RawRpc, RpcError
 
 ADDRESS = "0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774B"
 
@@ -243,7 +243,7 @@ def test_an_absent_result_is_an_error_not_an_empty_list():
     try:
         with pytest.raises(GenLayerReadError) as exc:
             GenLayerReader(rpc.url).call(ADDRESS, "list_cases", [])
-        assert "empty result" in str(exc.value)
+        assert "returned no result" in str(exc.value)
     finally:
         rpc.close()
 
@@ -265,37 +265,97 @@ def test_a_transport_failure_is_an_error():
     assert "transport failure" in str(exc.value)
 
 
-def test_a_non_json_response_is_an_error():
-    import threading
-    from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
+def test_a_timeout_is_a_transport_failure():
+    """An endpoint that accepts the connection and never answers must not hang or misreport.
 
-    class _Handler(BaseHTTPRequestHandler):
-        protocol_version = "HTTP/1.1"
-
-        def do_POST(self):  # noqa: N802
-            length = int(self.headers.get("Content-Length", "0"))
-            self.rfile.read(length)
-            payload = b"<html>this is not JSON</html>"
-            self.send_response(200)
-            self.send_header("Content-Type", "text/html")
-            self.send_header("Content-Length", str(len(payload)))
-            self.end_headers()
-            self.wfile.write(payload)
-
-        def log_message(self, *_args):
-            pass
-
-    server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
-    thread = threading.Thread(target=server.serve_forever, daemon=True)
-    thread.start()
-    host, port = server.server_address[:2]
+    `requests` raises `ReadTimeout`, which is a `RequestException`, so it lands in the transport
+    branch. A timeout is the failure a live relay is most likely to meet and it had no coverage
+    at all; a bare `except ValueError` would have classified it as a bad response instead.
+    """
+    rpc = RawRpc(body=b'{"jsonrpc":"2.0","id":1,"result":"0x"}', delay=2.0)
     try:
         with pytest.raises(GenLayerReadError) as exc:
-            GenLayerReader(f"http://{host}:{port}").call(ADDRESS, "list_cases", [])
+            GenLayerReader(rpc.url, timeout=1).call(ADDRESS, "list_cases", [])
+        assert "transport failure" in str(exc.value)
+    finally:
+        rpc.close()
+
+
+def test_a_non_json_response_is_an_error():
+    rpc = RawRpc(body=b"<html>this is not JSON</html>", content_type="text/html")
+    try:
+        with pytest.raises(GenLayerReadError) as exc:
+            GenLayerReader(rpc.url).call(ADDRESS, "list_cases", [])
         assert "non-JSON" in str(exc.value)
     finally:
-        server.shutdown()
-        server.server_close()
+        rpc.close()
+
+
+def test_an_http_error_status_is_reported_as_http_not_as_an_empty_result():
+    """A 502 from a proxy usually arrives as JSON with no `result`.
+
+    Before the status was checked, that read as "empty result" -- a fact about the *contract* --
+    when the truth was a fact about the *connection*. The two send an operator to different
+    places, which is why this is worth checking rather than inferring from the body.
+    """
+    rpc = RawRpc(
+        status=502,
+        body=b'{"jsonrpc":"2.0","id":1,"error":{"code":-32000,"message":"bad gateway"}}',
+    )
+    try:
+        with pytest.raises(GenLayerReadError) as exc:
+            GenLayerReader(rpc.url).call(ADDRESS, "list_cases", [])
+        message = str(exc.value)
+        assert "HTTP 502" in message
+        assert "bad gateway" in message, "the node's own error text is the useful part"
+        assert "empty result" not in message, "a connection failure is not a data condition"
+    finally:
+        rpc.close()
+
+
+@pytest.mark.parametrize("result", ["0x", "0x0"])
+def test_a_present_but_empty_result_is_an_error(result):
+    """The other spelling of "no value", and it must behave like the first one.
+
+    `decode_result` returns `None` for an empty body, which is right for a pure decoder. Handing
+    that back from a *reader* whose callers do `record["verdict"]` would raise a TypeError from
+    another module -- one condition, two outcomes, neither of them the reader's problem.
+    """
+    rpc = RawRpc(body=json.dumps({"jsonrpc": "2.0", "id": 1, "result": result}).encode())
+    try:
+        with pytest.raises(GenLayerReadError) as exc:
+            GenLayerReader(rpc.url).call(ADDRESS, "get_evidence", ["live-drain-run2"])
+        assert "empty" in str(exc.value)
+    finally:
+        rpc.close()
+
+
+def test_a_non_object_envelope_is_an_error():
+    """A JSON body that is not a JSON-RPC object is neither a result nor an error message."""
+    rpc = RawRpc(body=b'["jsonrpc", "2.0"]')
+    try:
+        with pytest.raises(GenLayerReadError) as exc:
+            GenLayerReader(rpc.url).call(ADDRESS, "list_cases", [])
+        assert "malformed JSON-RPC envelope" in str(exc.value)
+    finally:
+        rpc.close()
+
+
+def test_the_reader_keeps_the_endpoint_out_of_its_own_error_messages():
+    """AGENTS.md: never print a `.env` value, "public endpoints included".
+
+    The reader used to append the RPC URL to its empty-result message, and every caller prints
+    that message. Transport errors are out of scope here -- `requests` puts the host in its own
+    exception text and that cannot be rewritten -- so this pins the message the reader composes
+    itself, which is the one an operator sees when the endpoint answered and said nothing.
+    """
+    rpc = LocalRpc(lambda method, params: None)
+    try:
+        with pytest.raises(GenLayerReadError) as exc:
+            GenLayerReader(rpc.url).call(ADDRESS, "list_cases", [])
+        assert rpc.url not in str(exc.value)
+    finally:
+        rpc.close()
 
 
 def test_studionet_rpc_url_comes_from_the_pinned_sdk():

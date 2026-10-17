@@ -34,6 +34,7 @@ from __future__ import annotations
 
 import json
 import threading
+import time
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from typing import Any, Callable
 
@@ -176,6 +177,70 @@ def py_evm_handler(tester) -> Callable[[str, list], Any]:
         raise RpcError(-32601, f"method not found: {method}")
 
     return handler
+
+
+class RawRpc:
+    """An HTTP endpoint that returns exactly what a test dictates.
+
+    `LocalRpc` always answers 200 with a valid JSON-RPC envelope, which is right for testing
+    the protocol and useless for testing the failures *around* it: a 502 from a proxy, a body
+    that is HTML, or an endpoint that accepts the connection and then never answers (a
+    timeout). Those are the failures that were actually observed in the field, and they cannot
+    be exercised by stubbing the transport -- so this is a real socket returning real bytes.
+    """
+
+    def __init__(
+        self,
+        *,
+        status: int = 200,
+        body: bytes = b"",
+        content_type: str = "application/json",
+        delay: float = 0.0,
+    ) -> None:
+        self.status = status
+        self.body = body
+        self.content_type = content_type
+        self.delay = delay
+        self.requests: list[dict] = []
+        outer = self
+
+        class _Handler(BaseHTTPRequestHandler):
+            protocol_version = "HTTP/1.1"
+
+            def do_POST(self):  # noqa: N802 (http.server API)
+                length = int(self.headers.get("Content-Length", "0"))
+                raw = self.rfile.read(length) or b"{}"
+                try:
+                    outer.requests.append(json.loads(raw))
+                except ValueError:
+                    outer.requests.append({"_undecodable": raw})
+                if outer.delay:
+                    # Long enough for the client's own timeout to fire mid-request.
+                    time.sleep(outer.delay)
+                self.send_response(outer.status)
+                self.send_header("Content-Type", outer.content_type)
+                self.send_header("Content-Length", str(len(outer.body)))
+                self.end_headers()
+                try:
+                    self.wfile.write(outer.body)
+                except (BrokenPipeError, ConnectionResetError):
+                    pass  # the client timed out and went away, which is the point
+
+            def log_message(self, *_args):
+                pass
+
+        self.server = ThreadingHTTPServer(("127.0.0.1", 0), _Handler)
+        self.thread = threading.Thread(target=self.server.serve_forever, daemon=True)
+        self.thread.start()
+
+    @property
+    def url(self) -> str:
+        host, port = self.server.server_address[:2]
+        return f"http://{host}:{port}"
+
+    def close(self) -> None:
+        self.server.shutdown()
+        self.server.server_close()
 
 
 class LocalRpc:

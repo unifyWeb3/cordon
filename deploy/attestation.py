@@ -114,20 +114,6 @@ def attestation_digest(
     )
 
 
-def split_signature(signature: bytes) -> tuple[bytes, bytes, int]:
-    """65-byte (r||s||v) signature -> (r, s, v) with v normalised to 27/28."""
-    if len(signature) != 65:
-        raise ValueError("signature must be 65 bytes")
-    r = signature[:32]
-    s = signature[32:64]
-    v = signature[64]
-    if v in (0, 1):
-        v += 27
-    if v not in (27, 28):
-        raise ValueError(f"bad signature v: {v}")
-    return r, s, v
-
-
 # Half the secp256k1 group order. `HaltablePool._recover` rejects anything above it.
 SECP256K1_HALF_N = 0x7FFFFFFFFFFFFFFFFFFFFFFFFFFFFFFF5D576E7357A4501DDFE92F46681B20A0
 
@@ -183,12 +169,30 @@ def iso_to_epoch(iso: str) -> int:
     different deadline" failure this design is meant to make impossible. Asserted equal in
     `tests/direct/test_relay_attestation.py`.
 
-    Handles the shape the contract emits (`2026-10-17T09:00:00Z`, second resolution) and the
-    sub-second shape a node may hand back, which is truncated rather than rounded for the same
-    reason `_strip_us` truncates: agreement matters more than precision.
+    Handles the shape the contract emits (`2026-10-17T09:00:00Z`, second resolution), the
+    sub-second shape a node may hand back, and an explicit numeric offset. Sub-second precision
+    is truncated rather than rounded, for the same reason `_strip_us` truncates: agreement
+    matters more than precision.
+
+    ONE SHAPE IS REFUSED RATHER THAN TRUNCATED. `_strip_us` drops everything after the dot,
+    which is right for `...:00.123Z` and WRONG for `...:00.123+02:00`: the offset goes with the
+    fraction, the remainder is then read as UTC, and the instant silently shifts by two hours.
+    The contract carries the same defect, and it cannot arise from a record because the contract
+    only ever writes `...Z`. A signature over a deadline must never rest on a guess, so this
+    refuses that shape and names the contract-side divergence instead of quietly disagreeing
+    with it -- pinned by `test_iso_to_epoch_refuses_what_the_contract_would_silently_shift`.
     """
     text = iso.strip()
-    head = text.split(".", 1)[0]
+    head, sep, fraction = text.partition(".")
+    if sep:
+        rest = fraction.lstrip("0123456789")
+        if rest and rest != "Z":
+            raise ValueError(
+                f"sub-second timestamp carrying an offset is not handled: {iso!r}. "
+                f"emergency_halt._strip_us would discard {rest!r} together with the fraction "
+                "and then treat what remains as UTC, moving the instant; refusing rather than "
+                "signing a deadline the record may not mean."
+            )
     if not (head.endswith("Z") or "+" in head):
         head += "Z"
     return int(datetime.fromisoformat(head.replace("Z", "+00:00")).timestamp())
