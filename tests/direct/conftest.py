@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 from gltest.direct import pytest_plugin  # noqa: F401  (registers direct_* fixtures)
 
+# `deploy/` holds the key-free attestation encoder that the attester, the relay and these
+# tests all share. It is on the path so the Python digest can be asserted byte-identical to
+# the Solidity one (`tests/direct/test_attestation_digest.py`).
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "deploy"))
 sys.path.insert(0, str(Path(__file__).parent))
 from fixtures import FIXTURES, submit_payload  # noqa: E402
 
@@ -121,14 +126,20 @@ def advance_time(vm, iso: str) -> None:
 	_gl.message_raw["datetime"] = iso
 
 
-def submit(contract, vm, case_name: str, case_id: str | None = None):
-    """Submit one fixture as an arbitrary (non-owner) sender."""
+def submit(contract, vm, case_name: str, case_id: str | None = None,
+           target: str | None = None):
+    """Submit one fixture as an arbitrary (non-owner) sender.
+
+    `target` overrides the address the submitter *claims* the transaction was against,
+    leaving the fixture's own `to` untouched. That is how the target-mismatch case is built.
+    """
     fixture = FIXTURES[case_name]
     vm.sender = SUBMITTER
     payload = submit_payload(
         case_id or case_name,
         fixture,
         URL_FOR[case_name],
+        target=target,
     )
     return contract.submit_proof(payload)
 
