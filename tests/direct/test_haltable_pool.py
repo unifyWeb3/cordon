@@ -17,6 +17,9 @@ Deadlines are computed from BLOCK time, never the host clock. `maxWindow` is mea
 nobody can reproduce on another machine.
 """
 
+import re
+from pathlib import Path
+
 import pytest
 
 from attestation import (
@@ -41,6 +44,7 @@ from evm_harness import (  # noqa: F401
 
 CASE = "live-drain-run2"
 MAX_WINDOW = 3600
+ROOT = Path(__file__).resolve().parent.parent.parent
 
 
 def _deploy(evm, pool_artifact, attesters, max_window=MAX_WINDOW, deployer=None):
@@ -551,3 +555,137 @@ def test_unfreeze_shortens_and_the_owner_is_required(evm, pool_artifact, account
     pool.expect_ok(owner, "unfreeze", "cleared")
     assert pool.call("frozenUntil") == 0
     assert pool.call("isFrozen") is False
+
+
+# ------------------------------------------------------------------ replay
+
+
+def test_replaying_an_attestation_after_its_window_closed_is_refused(
+    evm, pool_artifact, accounts, attester
+):
+    """A signature is not a standing permission: it dies with the window it names.
+
+    The scenario to survive is the one an attestation file left lying around invites -- the
+    freeze lapses, and whoever kept a copy pushes the same bytes back. Re-applying it after
+    expiry must be refused, and `frozenUntil` must be untouched, so a refused replay cannot
+    even rewrite state on its way out.
+    """
+    attester_addr, attester_key = attester
+    pool = _deploy(evm, pool_artifact, [attester_addr])
+
+    expires = _deadline(pool, 300)
+    signature = _attest(evm, pool, attester_key, expires_at=expires)
+    pool.expect_ok(
+        attester_addr, "freezeFromAttestation", case_hash(CASE), VERDICT_HASH_CONFIRMED,
+        True, expires, signature,
+    )
+    assert pool.call("frozenUntil") == expires
+
+    # The window lapses on its own, with nobody acting.
+    assert pool.advance_to(expires + 120) > expires
+    assert pool.call("isFrozen") is False
+
+    # The same bytes, offered again.
+    reason = pool.expect_revert(
+        "freezeFromAttestation", case_hash(CASE), VERDICT_HASH_CONFIRMED, True, expires, signature
+    )
+    assert reason == "window already closed"
+    assert pool.call("frozenUntil") == expires, "a refused replay must not touch the deadline"
+    assert pool.call("isFrozen") is False, "a refused replay must not re-freeze the pool"
+
+
+# ------------------------------------------------------------------ cross-chain
+
+
+def test_an_attestation_signed_for_another_chain_is_refused(evm, pool_artifact, accounts, attester):
+    """`chainId` lives in the domain separator, and the pool enforces it.
+
+    `tests/direct/test_attestation_digest.py` proves the two encodings *differ* per chain; this
+    proves the chain *rejects* the foreign one. The replay an attacker actually has to hand is
+    exactly this: a genuine attester signature over the same case, same pool address and same
+    deadline, computed for a different chain id. It must surface as "unknown attester" -- there
+    is deliberately no chain-specific error, because the pool cannot tell a foreign-chain
+    signature from a forged one and inventing a reason would be a lie about what it checked.
+    """
+    attester_addr, attester_key = attester
+    pool = _deploy(evm, pool_artifact, [attester_addr])
+    this_chain = evm.backend.chain.chain_id
+    expires = _deadline(pool)
+
+    for other_chain in (1, this_chain + 1):
+        foreign = sign(
+            attestation_digest(
+                other_chain, pool.address, CASE, pool.address, CONFIRMED_EXPLOIT, True, expires
+            ),
+            attester_key,
+        )
+        reason = pool.expect_revert(
+            "freezeFromAttestation", case_hash(CASE), VERDICT_HASH_CONFIRMED, True, expires,
+            foreign,
+        )
+        assert reason == "unknown attester", f"chain {other_chain} attestation was not refused"
+        assert pool.call("frozenUntil") == 0
+
+    # The control, without which the two refusals above prove nothing: the same key, the same
+    # deadline, the same case -- only the chain id changed -- does land on this chain.
+    pool.expect_ok(
+        attester_addr, "freezeFromAttestation", case_hash(CASE), VERDICT_HASH_CONFIRMED, True,
+        expires, _attest(evm, pool, attester_key, expires_at=expires),
+    )
+    assert pool.call("frozenUntil") == expires
+
+
+# ------------------------------------------------------------------ who can write the deadline
+
+
+def _solidity_functions(source: str) -> dict[str, str]:
+    """`name -> body` for each function with a body, by brace matching.
+
+    Enough to audit *where* a variable is written. A behavioural test can only show that the
+    calls it thought of are refused; reading every writer is what answers "no path at all".
+    """
+    bodies: dict[str, str] = {}
+    for match in re.finditer(r"function\s+(\w+)\s*\([^;]*?\)[^{;]*\{", source):
+        start = match.end() - 1
+        depth = 0
+        for index in range(start, len(source)):
+            if source[index] == "{":
+                depth += 1
+            elif source[index] == "}":
+                depth -= 1
+                if depth == 0:
+                    bodies[match.group(1)] = source[start : index + 1]
+                    break
+    assert bodies, "no functions matched -- the audit below would pass vacuously"
+    return bodies
+
+
+def test_the_only_writers_of_frozenUntil_are_the_attested_path_and_unfreeze():
+    """Every write to the deadline, enumerated, so "no other path" is checked rather than hoped.
+
+    Two writers are allowed, and neither can create or extend a freeze:
+
+      * `freezeFromAttestation` stores only the `expiresAt` it has just checked a signature over,
+        and refuses a deadline at or before the current one;
+      * `unfreeze` is owner-only and writes literal zero.
+
+    So the answer to "can the relay key, or anyone without an attester signature, change
+    `frozenUntil`?" is: only downwards, and only as the pool's `owner`. That is a real caveat and
+    it is why `docs/integration.md` section 5 tells an operator who does not want the gas payer
+    to hold it to construct the pool with a different `owner`.
+    """
+    functions = _solidity_functions(
+        (ROOT / "demo-target" / "src" / "HaltablePool.sol").read_text()
+    )
+    writers = {name for name, body in functions.items() if re.search(r"\bfrozenUntil\s*=", body)}
+    assert writers == {"freezeFromAttestation", "unfreeze"}, (
+        f"unexpected writers of frozenUntil: {sorted(writers)} -- a path to the deadline that "
+        "this test does not know about"
+    )
+
+    # `unfreeze` may only ever clear it, whatever gets passed in.
+    assert re.findall(r"\bfrozenUntil\s*=\s*\w+", functions["unfreeze"]) == ["frozenUntil = 0"]
+    # The attested path may only ever store the value it verified.
+    assert re.findall(
+        r"\bfrozenUntil\s*=\s*\w+", functions["freezeFromAttestation"]
+    ) == ["frozenUntil = expiresAt"]
