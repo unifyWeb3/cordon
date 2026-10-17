@@ -175,8 +175,12 @@ Full transcript: `state/reviews/2026-10-01-hackathon-discovery/LIVE-RUN.md`.
 contracts/emergency_halt.py      the Intelligent Contract
 contracts/minimal_probe.py       20-line deploy probe (see "What we could not verify")
 deploy/                          deploy + submit scripts, and deploy/README.md
+deploy/attestation.py            key-free EIP-712 encoder: attester, relay and tests all share it
+deploy/attest.py                 signs one adjudicated freeze (the only attester key)
+deploy/freeze_watcher.py         verifies and relays a signed freeze (holds no attester key)
+demo-target/src/HaltablePool.sol the EVM target: attestation-only pause, self-lifting expiry
 docs/integration.md              how another protocol plugs this in
-tests/direct/                    hermetic suite: 38 tests, no network
+tests/direct/                    hermetic suite: 165 tests, no network
 web/                             Next.js 15 frontend (landing narrative + console)
 web/src/lib/content.ts           every user-visible string and number, no JSX literals
 web/src/lib/sample-run.json      a real recorded adjudication, timings included
@@ -205,9 +209,14 @@ while the deploy scripts want a current SDK — see `deploy/README.md`.
 
 ## Tests
 
-`uv run pytest tests/direct/ -v` → **38 passed**. ~23s on an idle machine; budget a few
+`uv run pytest tests/direct/ -v` → **165 passed**. ~30s on an idle machine; budget a few
 minutes if something else is loading the box. The test count is the stable number, not the
 wall clock.
+
+Two of those modules — `test_haltable_pool.py` and `test_relay_attestation.py` — compile the EVM
+target with `solc-js` and execute it on an in-process EVM (`py-evm`), signing real attestations and
+sending real signed transactions. Those skip **loudly** if `solc` is missing rather than passing
+quietly; run `cd demo-target && npm install` first.
 
 Hermetic by construction: the web fetch and the model are both mocked from recorded evidence.
 The model stand-in keys off the *observed evidence in the prompt*, so if the contract ever
@@ -261,10 +270,13 @@ deploy target, so it becomes usable unchanged if the preview recovers.
 
 **4. EVM emit does not deliver, and the freeze reaches the target off-chain.** Tested on
 Studionet against a live target: consensus finalized, the contract recorded the call, the call
-returned without raising — and the target chain received nothing. `deploy/freeze_watcher.py` does
-that last hop, so whoever runs it holds a key that can freeze. What changes is that the key can no
-longer freeze *unbounded and unaccountably*: the window comes from an adjudicated verdict, it is
-on the public record, and the target lapses it itself. Full evidence in the next section.
+returned without raising — and the target chain received nothing. Those `emit` calls have since
+been removed, so nothing in the contract now reports a delivery it did not achieve. The last hop
+is off-chain and split in two: `deploy/attest.py` signs a statement naming the case, the pool and
+the deadline; `deploy/freeze_watcher.py` carries it and pays the gas without holding any key that
+can freeze. With one attester configured the attester key is still a single point of failure,
+bounded by the pool's maximum window — what changes is that a wrong freeze is now attributable to
+a signed, public statement rather than an anonymous pause. Full evidence in the next section.
 
 **5. This is tier-2, and the evidence is shallow.**
 The digest uses receipt status, one selector, event-topic counts and two magnitude bands. It
@@ -316,23 +328,38 @@ Full evidence: `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`.
 
 ### So the last hop is off-chain, and here is the honest cost
 
-The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 38
-hermetic tests plus live consensus runs. **Delivery of the freeze to an EVM contract is not.**
+The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 165
+hermetic tests plus live consensus runs. **Delivery of the freeze to an EVM contract is not**,
+and since 2026-10-17 the contract no longer attempts it: the `emit` calls were **removed** rather
+than left in place, so nothing in the contract can report a delivery that did not happen.
 
-`deploy/freeze_watcher.py` does it instead, as working code rather than a documented intention:
+`deploy/freeze_watcher.py` does the last hop, as working code rather than a documented intention.
+Since the attestation change it is split in two, so that no single program can both invent a freeze
+and apply it:
 
-- **read path, live:** polled the deployed contract, found all 3 cases, correctly took no action
-- **write path, live:** invoked against the real target — `frozenUntil` moved, `isFrozen()` went
-  true, then false on expiry **with no unfreeze transaction sent**
+- **read path, live:** the older watcher polled the deployed contract, found all 3 cases, and
+  correctly took no action
+- **write path, older interface:** under the former `freeze(string,uint256)` entry point, the
+  watcher was invoked against the real target and `frozenUntil` moved, `isFrozen()` went true,
+  then false on expiry **with no unfreeze transaction sent**. That entry point has since been
+  removed, so this is history rather than a claim about the current relay.
+- **write path, current:** the attestation-to-freeze path runs end to end on an in-process EVM
+  with real signatures and a real signed transaction (`tests/direct/test_relay_attestation.py`),
+  including the assertion that the pool's `frozenUntil` equals the signed deadline exactly. It
+  has **not** been run against a deployed target.
 
-Only the composition (verdict observed → watcher fires) is unexercised, because no live case has
-reached `CONFIRMED_EXPLOIT`.
+Only the composition (verdict observed → relay fires) is unexercised, because no live case has
+reached `CONFIRMED_EXPLOIT` — and none was manufactured.
 
-**State the trade plainly:** whoever runs the watcher holds a key that can freeze. What this
-architecture changes is that the key can no longer freeze *unbounded and unaccountably* — the
-window comes from an adjudicated verdict, it is on the public record, and the target lapses it
-itself. That is weaker than "consensus freezes your protocol". It is the claim the evidence
-supports, and it is still the one nobody else in the ecosystem is making.
+**State the trade plainly.** The attester holds the only key that can authorise a freeze. The relay
+that carries it holds no such key and can choose neither the pool, the verdict nor the deadline:
+editing any of them breaks the signature, and a substituted deadline fails as `unknown attester`
+rather than being quietly accepted. With one attester configured this is **still a single key**, and
+it can freeze wrongly for up to the maximum window. What changes is that it can no longer do so
+*unattributably* — a wrong freeze is a signed, public, appealable statement by a known address
+rather than an anonymous pause, and the target lapses it by itself. That is weaker than "consensus
+freezes your protocol". It is the claim the evidence supports, and it is still the one nobody else
+in the ecosystem is making.
 
 ### Also broken in the pinned SDK
 

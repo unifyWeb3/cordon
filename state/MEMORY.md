@@ -28,6 +28,24 @@ Updated 2026-10-02.
   into that same directory. Without pinning, `genvm-lint check` breaks the whole suite.
 - **`genvm-lint` and `gltest` share a cache directory.** Treat running one as a side effect on
   the other.
+- **`genvm-lint check` fails validation with a 404 unless `GENVMROOT` is set.** Verified
+  2026-10-17 against `genvm-linter` 0.10.0. `genvm_linter/validate/artifacts.py` builds
+  `.../releases/download/{latest}/genvm-universal.tar.xz` — it resolves the **latest** tag and
+  never consults the contract's `Depends` pin. The latest tag is now `v0.3.0-rc7`, where that
+  asset 404s because upstream renamed it to `genvm-runners-all.tar.xz` (HTTP 200 on the same
+  tag). The old name still resolves on `v0.2.16`, so the contract's pin is fine; the tool is
+  broken. Facts worth keeping straight:
+  - The `download -v <tag>` subcommand accepts a version, but `check`/`validate` call
+    `download_artifacts(version=None)`, so caching an older release does not help.
+  - Do **not** fabricate a file named after the latest tag — a validation result attributed to
+    a release that does not contain it is worthless.
+  - Supported path: `sdk_loader.get_sdk_paths_from_genvmroot()` honours `$GENVMROOT`, expecting
+    `<root>/runners/py-lib-genlayer-std/src`. Point it at the std lib `gltest` already extracted
+    under `~/.cache/gltest-direct/extracted/<ver>/py-lib-genlayer-std/<hash>/` and both lint and
+    validation pass. Confirm the pairing is real rather than assuming it: the pinned
+    `py-genlayer` runner's own `runner.json` names its `py-lib-genlayer-std` hash. For this
+    contract they match (`1jb45aa8…` → `11rhn002…`).
+  - `genvm-linter`'s own cache lives at `~/.cache/genvm-linter`, separate from gltest's.
 
 ## SDK gotchas that cost real debugging time
 

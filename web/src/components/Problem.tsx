@@ -79,8 +79,9 @@ export function How() {
 
 /**
  * The emit caveat. This is the single most important paragraph on the page and it is not
- * softened anywhere: consensus decides the verdict, delivery is a watcher, and the watcher holds
- * a key that can freeze. Phase 1 tested emit() against a live target and it does not deliver.
+ * softened anywhere: consensus decides the verdict, delivery is off-chain, and it is split so
+ * that the relay holds no key that can freeze. Phase 1 tested emit() against a live target and
+ * it does not deliver. The copy lives in `content.ts`; keep the two in step.
  */
 export function Transport() {
   return (
