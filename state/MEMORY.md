@@ -1,6 +1,67 @@
 # Memory — durable decisions and constraints
 
-Updated 2026-10-02.
+Updated 2026-10-17.
+
+## Stage 4 — live redeployment, PAUSED on Base Sepolia ETH (2026-10-17)
+
+Resume point. Everything below was observed, not planned. Do not redo the GenLayer side.
+
+| Role | Address |
+|---|---|
+| attester (signs verdicts; pool constructor arg) | `0x5627F3629aE04D9F34Ac6bC75d3FC16d4cD62f17` |
+| GenLayer deployer (owner of the new IC) | `0x7b1860d29ba5d934cb80e35f4418B5a418a90E68` |
+| Base Sepolia deployer **and** relay gas payer (also the pool's `owner`) | `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc` |
+
+**Done: new Intelligent Contract on Studionet 61999** —
+`0x95be4d883F89F28CF9cE986e1B400c8CB0808201`, deploy tx
+`0x32a2496298161e5cdb4660bd7c18be4ab37fb176610908ce3ee0fcb4d9e2da1a`.
+Read back from the node rather than from the deploy script, whose output was lost (see the first
+landmine below): `gen_getTransactionStatus` → `FINALIZED`; `gen_getContractSchema` → 11 methods;
+keyless `gen_call` `stats()` → `{"cases": 0, "default_freeze_seconds": 3600,
+"evidence_url_template": "", "freezes": 0, "owner": "0x7b18…0E68", "submits": 0}`; `list_cases()`
+→ `[]`. Constructor args sent: `[owner=<GenLayer deployer>, "", "jsonrpc", <Base Sepolia public
+RPC>]`. No view exposes `evidence_mode` or `evidence_rpc_url`, so they stay read-side unverified
+until the first `submit_proof` in the live run.
+
+Funded via the Studio's own `sim_fundAccount(address, 10**18)`: result
+`0xf3d18644…048e126c`, and `eth_getBalance` moved `0` → `1e18` wei. `genlayer_py.fund_account()`
+refuses any chain but localnet, so the method has to be called directly.
+
+**Keys.** `/root/cordon/.env`, mode 600, covered by `.gitignore:2`, untracked — confirmed with
+`git check-ignore -v .env` and an empty `git status --short`. Names only: `GENLAYER_PRIVATE_KEY`,
+`CORDON_ATTESTER_PRIVATE_KEY`, `CORDON_ATTESTER_ADDRESS`, `BASE_SEPOLIA_PRIVATE_KEY`,
+`BASE_SEPOLIA_RPC_URL`. Throwaway, testnet only, never printed, logged or committed.
+
+**Blocked.** Base Sepolia deployer balance is **0** — one `eth_getBalance`, HTTP 200, result `0x0`.
+Per the user's rule: no polling, no retry loop, no faucet automation.
+
+**Exact next step.** Fund `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc` with Base Sepolia ETH and
+reply "funded". Then: (1) check the balance once; (2) deploy the pool with `attesters_ =
+[0x5627…2f17]` and `maxWindow_ = 3600` — note there is **no target-deploy tooling in this repo**
+(no `forge`, no `cast`, no `solc` binary on this host; only npm `solcjs`, and no script that sends a
+creation transaction), so one has to be written: compile with `demo-target`'s npm solc, build a
+**legacy** transaction that includes `gasPrice` (Base Sepolia rejects one without it), sign with
+`BASE_SEPOLIA_PRIVATE_KEY`, `eth_sendRawTransaction`, then read `attesters(…)` and `MAX_WINDOW` back
+off the chain before believing it; (3) update every address in `deploy/` (`attest.py`'s
+`DEFAULT_TARGET`, `freeze_watcher.py`, usage lines), `docs/`, `web/` and the top-level `README.md` —
+and ask about `AGENTS.md`, which carries both addresses plus the app URL and was not on the user's
+list; (4) run the live path — case → verdict → `deploy/attest.py` → `deploy/freeze_watcher.py` — and
+record only what was observed.
+
+Two landmines found in this stage, both new:
+
+- **A killed deploy script is not a failed deploy.** `timeout 280` killed
+  `deploy/deploy_studio_dev.py` (exit 124) *after* its transaction was submitted, and that
+  transaction finalized. The script prints the tx id only at the very end, and
+  `eth_getBlockByNumber` on Studionet is a stub (zero hashes, no transactions) so the chain cannot
+  be scanned for it. Recovery: `explorer-studio.genlayer.com/address/<deployer>` lists type, status
+  and `to` for the account — the contract address was read from there and then confirmed against
+  the node. Run deploy scripts unbuffered (`python -u`), and treat exit 124 as "unknown", not
+  "failed".
+- **`.venv-deploy` does not exist in a fresh checkout and its dependency set is recorded nowhere.**
+  Rebuild with `uv venv .venv-deploy --python 3.12 && uv pip install --python
+  .venv-deploy/bin/python genlayer-py==0.18.0 requests python-dotenv`. `requests` and
+  `python-dotenv` are imported by the deploy scripts but are not dependencies of `genlayer-py`.
 
 ## Decisions
 
