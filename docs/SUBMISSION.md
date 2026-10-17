@@ -61,7 +61,7 @@ it is tier-2 judgement for ambiguous cases. Pair it with one.
 adjudication recorded against the deployed contract on GenLayer Studionet (chain 61999), and every
 case has a shareable link at `/case/<caseId>`.
 
-**Run the tests.** The contract is hermetic — 165 tests, no network:
+**Run the tests.** The contract is hermetic — 185 tests, no network:
 
 ```bash
 uv sync
@@ -95,7 +95,10 @@ Stated plainly, because a demo that overclaims is worse than one that does not:
    `deploy/freeze_watcher.py` carries it and pays the gas. The **attester** key is the one that can
    freeze, and with one attester configured that is still a single key — bounded by the pool's
    maximum window, but single. The **relay** key cannot freeze at all: it can neither choose the
-   pool, the verdict nor the deadline, because any edit breaks the signature. So the honest summary
+   pool, the verdict nor the deadline, because any edit breaks the signature. As the pool's `owner`
+   it can clear a live deadline early and can never create or extend one — the two write sites are
+   enumerated in `tests/direct/test_haltable_pool.py`, and a deployment that does not want the gas
+   payer to hold even that can give `owner` a different address. So the honest summary
    is that an unaccountable pause key has been replaced by an attributable, window-bounded
    signature; the trust property the project set out to remove is narrowed, not eliminated.
    Full write-up in the README under *Tested, and found broken*.

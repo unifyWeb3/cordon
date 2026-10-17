@@ -104,3 +104,42 @@ Leader and validators fetch independently, so only fields that are fixed for a g
 *forever* may cross the consensus boundary. Dropped: block number, gas, timestamps, raw logs,
 raw bodies. Kept: input selector, event-topic counts, value band, log band, receipt status.
 There is a test asserting byte-identical digests for the same tx with different block/gas.
+
+## Timestamp parsing: `_strip_us` shifts a sub-second stamp that carries an offset (open)
+
+`contracts/emergency_halt.py::_strip_us` does `text.split(".", 1)[0]`, i.e. it discards
+*everything* after the dot. That is right for `2026-10-17T09:00:00.123Z` (truncation) and wrong
+for `2026-10-17T09:00:00.123+02:00`: the offset goes with the fraction, `"+" in head` is then
+False, `Z` is appended, and the instant silently moves by two hours. Verified 2026-10-17 with
+`.venv/bin/python -m pytest tests/direct/test_relay_attestation.py -k silently_shift`, which also
+asserts the shift. It cannot arrive from a record, because `_iso_shift` always emits `...Z` — so
+this is latent, not live. NOT patched: the deliverable is under review, and `deploy/attestation.py
+::iso_to_epoch` must agree with `_strip_us` on every shape that can occur. `iso_to_epoch` instead
+**refuses** the ambiguous shape, so the two cannot quietly agree on a deadline neither should sign.
+
+## A refusal path that raises is not a refusal path
+
+Found by reviewing the freeze diff, fixed 2026-10-17. `deploy/freeze_watcher.py::verify` promised
+`RefusedToBroadcast` but called `normalize_address`, which raises `ValueError` on a malformed
+string — and `main` only handles `RefusedToBroadcast`. So a junk `signer` field in the attestation
+file (an operator-supplied file, i.e. untrusted input) escaped as a traceback: the relay said "this
+tool is broken" where the truth was "this attestation is invalid". `deploy/attest.py::refusal_reason`
+had the mirror-image version, comparing targets as raw strings so a malformed one passed the gate
+and blew up later in `attestation_digest`. Rule: at every boundary, parse the untrusted value and
+convert the parse failure into the refusal the caller already handles. Tests:
+`test_verify_refuses_a_malformed_address_in_the_attestation_file`,
+`test_build_attestation_refuses_a_malformed_target_instead_of_raising`.
+
+Two related traps in the same path, both now pinned by tests:
+
+- `requests.exceptions.JSONDecodeError` inherits from **both** `ValueError` and `RequestException`,
+  so the transport branch swallows it and reports a bad body as a network fault. Catch it first —
+  this was fixed once in `genlayer_read.py` and was still standing in `freeze_watcher.py::Evm._call`.
+- An HTTP error *status* is not an empty result. A 502 from a proxy arrives as JSON with no
+  `result`; without a status check that reads as "the contract answered nothing", sending the
+  operator to debug the wrong layer.
+
+Also: source-audit tests are the only way to prove an *absence* (no owner pause, no writer of
+`frozenUntil`, no signing in the relay). `test_the_only_writers_of_frozenUntil_are_the_attested_
+_path_and_unfreeze` parses the Solidity and enumerates every assignment; a behavioural test can
+only cover the calls someone thought of.

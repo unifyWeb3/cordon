@@ -263,7 +263,8 @@ transcript in `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`. The `e
 since been **removed** from `contracts/emergency_halt.py`, so there is no longer a call that
 reports success and delivers nothing. What remains in its place is a commented note pointing here.
 
-The last hop is two programs, deliberately split so that neither alone can freeze:
+The last hop is two programs, deliberately split so that the key that pays the gas is not the key
+that decides:
 
     # 1. The attester signs. This is the only program that holds an attester key.
     python deploy/attest.py --case <CASE_ID> --out /tmp/opencode/attestation.json
@@ -295,6 +296,18 @@ the pool and the deadline, so a wrong freeze is a signed, public, appealable sta
 address rather than an anonymous pause — and the relay operator, who pays the gas, cannot choose
 any of those three things. The honest summary is: an unaccountable pause key has been replaced by
 an attributable, window-bounded signature. It is not decentralisation.
+
+**One authority the pool does hand out, and it is worth naming: `unfreeze`.** The pool's `owner` can
+clear `frozenUntil`, and it can only ever *clear* it — never create a freeze, never extend one. That
+is checked rather than asserted: every write site in the contract is enumerated in
+`tests/direct/test_haltable_pool.py`
+(`test_the_only_writers_of_frozenUntil_are_the_attested_path_and_unfreeze`), and there are exactly
+two, the attested path and an owner-only `unfreeze` that writes literal zero. The demo deploys the
+pool with the relay key as `owner` for convenience, because one key is one thing to configure; the
+consequence is that the gas payer can end a freeze early and still cannot start one. If you do not
+want the gas payer to hold even that, deploy the pool with a different `owner` (or
+`transferOwnership` afterwards): `freezeFromAttestation` is permissionless, so the relay needs no
+authority at all to deliver a freeze.
 
 If you want to do the last hop yourself, the inputs are all public and need no privileged GenLayer
 access:
