@@ -10,9 +10,9 @@ think to look.
 
 | What | Value |
 |---|---|
-| Contract | `0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774B` on Studionet, chain 61999 |
-| Contract explorer | `https://explorer-studio.genlayer.com/address/0x37E08A26…74b` |
-| Target protocol | `0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B` on Base Sepolia |
+| Contract | `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` on Studionet, chain 61999 |
+| Contract explorer | `https://explorer-studio.genlayer.com/address/0x95be4d88…201` |
+| Target protocol | `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` on Base Sepolia |
 | App | `https://cordon-oxunify.vercel.app` |
 | Headline case | `/case/live-drain-run2` → `INSUFFICIENT_EVIDENCE` |
 

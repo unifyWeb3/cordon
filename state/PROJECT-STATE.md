@@ -21,7 +21,7 @@ Updated 2026-10-02. Repo: `/home/unify/mys` (git initialised during this build, 
 
 ## Deployed
 
-`0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774b` — Studionet (chain 61999).
+`0x95be4d883F89F28CF9cE986e1B400c8CB0808201` — Studionet (chain 61999).
 Not studio-dev: contract execution is broken there (see below).
 
 ## Verification status
