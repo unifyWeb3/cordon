@@ -61,7 +61,7 @@ it is tier-2 judgement for ambiguous cases. Pair it with one.
 adjudication recorded against the deployed contract on GenLayer Studionet (chain 61999), and every
 case has a shareable link at `/case/<caseId>`.
 
-**Run the tests.** The contract is hermetic — 198 tests, no network:
+**Run the tests.** The contract is hermetic — 206 tests, no network:
 
 ```bash
 uv sync
@@ -118,8 +118,11 @@ Stated plainly, because a demo that overclaims is worse than one that does not:
    `INSUFFICIENT_EVIDENCE` on a byte-identical digest. It settled toward the conservative verdict.
    Both times, nothing was frozen.
 
-5. **A `genlayer-py` read defect is open and unfixed.** `genlayer-py` 0.18.0 reports
-   `Contract 0x37E08A26… not found` for a contract that `genlayer-js` 1.1.8 reads successfully at
+5. **A `genlayer-py` read failure was observed against the previous deployment and does not
+   reproduce against the current one.** `genlayer-py` 0.18.0 reported
+   `Contract 0x37E08A26… not found` for a contract that `genlayer-js` 1.1.8 read successfully at
    the same endpoint on the same chain. Reproduced twice; endpoint, chain, address and existence
-   all ruled out. This weakens the watcher's documented read path. The frontend claim is unaffected
-   and was re-verified in production.
+   all ruled out. On 2026-10-17, after the redeployment, the same SDK version read
+   `0x95be4d88…` — schema, `stats()` — with no error, so whatever it was, it was specific to that
+   contract rather than to the endpoint. The relay does not depend on it either way: it reads
+   keyless, which it has to do regardless because the SDK's read path requires a private key.

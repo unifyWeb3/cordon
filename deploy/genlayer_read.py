@@ -4,14 +4,19 @@ WHY NOT `genlayer_py`'s client
 -----------------------------
 Two independent reasons, both documented in `state/MEMORY.md` and the pinned SDK source:
 
-1. `MEMORY.md` records that `genlayer-py` 0.18.0 answers
+1. `MEMORY.md` records that `genlayer-py` 0.18.0 answered
    `gen_call failed (code=-32001): Contract 0x37E08A26... not found` at the correct endpoint,
-   correct chain and correct address, while `genlayer-js` 1.1.8 reads the same contract. That
-   defect is still open. `AGENTS.md` says: never conclude "the contract is gone" from a Python
-   SDK `gen_call` failure.
+   correct chain and correct address, while `genlayer-js` 1.1.8 read the same contract. That was
+   reproduced twice, and it did **not** reproduce against the redeployed contract on 2026-10-17:
+   the same SDK version reads `0x95be4d88…` for both the schema and `stats()`. So the failure was
+   specific to that deployment rather than to the endpoint or to the SDK as a whole — and
+   `AGENTS.md` still says never to conclude "the contract is gone" from one Python SDK
+   `gen_call` failure.
 2. `genlayer_py/contracts/actions.py` raises `GenLayerError` from `read_contract` unless an
    account is connected. Reading PUBLIC state would therefore require a GenLayer private key,
-   which is wrong for a relay that should hold no privileged access at all.
+   which is wrong for a relay that should hold no privileged access at all. **This reason is
+   structural and did not change with the redeployment** — it is what keeps this module on the
+   keyless path.
 
 So this module does the one thing the SDK is still reliable for -- producing the calldata
 blob -- and does the transport itself with `requests`. No account, no key, no client object.

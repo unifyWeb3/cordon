@@ -2,9 +2,9 @@
 
 Updated 2026-10-17.
 
-## Stage 4 — live redeployment, PAUSED on Base Sepolia ETH (2026-10-17)
+## Stage 4 — live redeployment onto fresh keys, DONE (2026-10-17)
 
-Resume point. Everything below was observed, not planned. Do not redo the GenLayer side.
+Everything below was observed, not planned.
 
 | Role | Address |
 |---|---|
@@ -12,7 +12,7 @@ Resume point. Everything below was observed, not planned. Do not redo the GenLay
 | GenLayer deployer (owner of the new IC) | `0x7b1860d29ba5d934cb80e35f4418B5a418a90E68` |
 | Base Sepolia deployer **and** relay gas payer (also the pool's `owner`) | `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc` |
 
-**Done: new Intelligent Contract on Studionet 61999** —
+**New Intelligent Contract on Studionet 61999** —
 `0x95be4d883F89F28CF9cE986e1B400c8CB0808201`, deploy tx
 `0x32a2496298161e5cdb4660bd7c18be4ab37fb176610908ce3ee0fcb4d9e2da1a`.
 Read back from the node rather than from the deploy script, whose output was lost (see the first
@@ -32,29 +32,89 @@ refuses any chain but localnet, so the method has to be called directly.
 `CORDON_ATTESTER_PRIVATE_KEY`, `CORDON_ATTESTER_ADDRESS`, `BASE_SEPOLIA_PRIVATE_KEY`,
 `BASE_SEPOLIA_RPC_URL`. Throwaway, testnet only, never printed, logged or committed.
 
-**Blocked.** Base Sepolia deployer balance is **0**. Checked twice — once before reporting, once
-after the user replied "funded" — one `eth_getBalance` each time, HTTP 200, result `0x0` both times.
-The endpoint was validated in the same pass instead of being assumed: `eth_chainId` → `0x14a34`
-(Base Sepolia 84532), `eth_blockNumber` → `48248784`, and the previous target `0xDF9Ba466…2cb32b7B`
-returns 3,149 bytes of code — so the RPC is reading the real chain, and the zero is real. The ETH
-did not arrive at `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc`. Per the user's rule: no polling, no
-retry loop, no faucet automation. Next session: confirm which address was actually funded before
-doing anything else.
+**Target pool — Base Sepolia 84532: `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e`**, tx
+`0x3a8f160e83aceb15ae2ea862d7457ab1c1587bfa49f3ca84ef758016fde1cba3`, block `0x2e03c61`,
+gasUsed 1,116,751 (tx at ~0.006 gwei), replacing `0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B`.
+Constructor `attesters_ = [0x5627…2f17]`, `maxWindow_ = 3600`. It was deployed by the new
+`deploy/deploy_target.py` — there was no way to send a creation transaction from this repo before
+this stage. **Every constructor-set value and the interface were read back off the chain, not taken
+from the receipt — 15/15 checks:** runtime code 4,646 bytes (the same length as the in-process EVM
+deployment of the same artifact), the required selectors present (`freezeFromAttestation`,
+`isAttester(address)`, `isFrozen()`, `unfreeze(string)`, `MAX_WINDOW()`), `freeze(string,uint256)`
+absent, `isAttester(attester)` true, `isAttester(0x0)` false, `attesterCount() == 1`,
+`MAX_WINDOW() == 3600`, `frozenUntil() == 0`, `isFrozen() == false`, `owner()` == the deployer,
+`attestationDigest(…)` returns 32 bytes.
 
-**Exact next step.** Fund `0x4f198Dcda2376eCD9C9FF429662b6EA9Db5264fc` with Base Sepolia ETH and
-reply "funded". Then: (1) check the balance once; (2) deploy the pool with `attesters_ =
-[0x5627…2f17]` and `maxWindow_ = 3600` — note there is **no target-deploy tooling in this repo**
-(no `forge`, no `cast`, no `solc` binary on this host; only npm `solcjs`, and no script that sends a
-creation transaction), so one has to be written: compile with `demo-target`'s npm solc, build a
-**legacy** transaction that includes `gasPrice` (Base Sepolia rejects one without it), sign with
-`BASE_SEPOLIA_PRIVATE_KEY`, `eth_sendRawTransaction`, then read `attesters(…)` and `MAX_WINDOW` back
-off the chain before believing it; (3) update every address in `deploy/` (`attest.py`'s
-`DEFAULT_TARGET`, `freeze_watcher.py`, usage lines), `docs/`, `web/` and the top-level `README.md` —
-and ask about `AGENTS.md`, which carries both addresses plus the app URL and was not on the user's
-list; (4) run the live path — case → verdict → `deploy/attest.py` → `deploy/freeze_watcher.py` — and
-record only what was observed.
+**`genlayer-py` reads the new contract.** 0.18.0 reported `not found` (`gen_call failed
+(code=-32001)`) for `0x37E08A26…` — reproduced twice, at the correct endpoint, chain and address,
+while `genlayer-js` read the same contract — and it does **not** reproduce against `0x95be4d88…`:
+same SDK version, `gen_getContractSchema` → 11 methods, `read_contract("stats")` → the same dict the
+keyless reader returns. So that failure was specific to the earlier deployment, not to the endpoint
+or to the SDK as a whole. The keyless reader stays for the structural reason: `read_contract` raises
+without a connected account, i.e. a GenLayer private key.
 
-Two landmines found in this stage, both new:
+**Live run, 2026-10-17 (observed, nothing inferred).** Case `live-drain-run3`: a real `deposit()` of
+0.0001 ETH into the new pool (`0xd7a4c3ad…3f67`, status `0x1`, block 48250491), submitted with
+`--target 0x9e6c83C8…` so the record names the live pool. GenLayer tx `0xa249af99…4428b` →
+`FINALIZED`, `MAJORITY_AGREE`, verdict **`FALSE_REPORT`**, evidence `found=True status=0x1
+value=SMALL logs=FEW … to=0x9e6c83c8…`. `deploy/attest.py --case live-drain-run3` **refused**
+(exit 3): `verdict is 'FALSE_REPORT', not CONFIRMED_EXPLOIT`, so nothing was signed and nothing was
+frozen. There is still no live `CONFIRMED_EXPLOIT` and none was manufactured — the freeze path
+stays covered by the hermetic suite, not by a live freeze.
+
+What *was* shown live on Base Sepolia, without signing a false verdict:
+
+- The deployed pool's `attestationDigest(...)` equals `deploy/attestation.py`'s digest for the same
+  inputs (`0xee6d4225…`, chain ts 1792269740, `expiresAt +900`) — contract and signer agree byte for
+  byte, on the live chain, not only in tests.
+- `freezeFromAttestation` with a **valid signature from a key that is not the attester** reverted
+  `unknown attester` in simulation and was broadcast and mined with **status `0x0`**
+  (`0x51691169…d818`, block 48250749, 31,029 gas). `frozenUntil()` and `isFrozen()` were still
+  `0`/`false` at that block and at `latest`. `isAttester(throwaway)` → 0, `attesterCount()` → 1.
+- `node web/scripts/verify-live.mjs` (default case now `live-drain-run3`) exits 0 against the new
+  contract: `evidence mode jsonrpc`, `value band SMALL`, `log band FEW`, `validator agreed true`,
+  `rationale 255 chars`, `verdict FALSE_REPORT`, `is_frozen() agrees false`. The first line also
+  closes the note above: `get_evidence` does report `evidence_mode: jsonrpc` — it is simply not in a
+  view.
+
+**App ids after the redeploy.** `sample-run.json` is a dated transcript (provenance: the *previous*
+contract, 2026-10-02) and was deliberately not rewritten — those GenLayer tx ids are real
+transactions on that contract, so editing the address inside it would falsify a record. Its ids
+(`…-run2`) are therefore read only by the replay components. The case the page tracks **live**
+(`web/src/app/page.tsx::DEFAULT_CASE`) and the verifier's default are `live-drain-run3`, the case
+that exists on the current contract. Same split in `deploy/record_run.py`, whose `HALT` now points
+at the new contract: re-running it writes a *fresh* transcript and replaces the old one.
+
+**The funding gap, for the record.** The deployer balance was `0` on two separate reports (one
+`eth_getBalance` each, HTTP 200, `0x0`) and the user's "funded" preceded the ETH. On the third read
+it was `99991562780006198` wei — 0.1 ETH minus the funder's fee, which is *not* a sign that
+anything was sent from the key: `eth_getTransactionCount` was `0x0` on both `latest` and `pending`.
+One `eth_getBalance` per report, no polling, no faucet automation.
+
+Landmines found in this stage, all new:
+
+- **The test stub's receipt was snake_case; a node's is camelCase.** `eth-tester` hands back
+  `contract_address`, so the stub re-emitted that and `deploy/deploy_target.py` — which reads
+  `contractAddress`, correctly — hit "receipt reports success but has no contractAddress". The
+  translation belongs in the stub, not the client: a client that read `contract_address` would be
+  wrong against every real chain and would only find out live. `rpc_stub.py` now maps the standard
+  receipt keys, and the same pass added the missing `eth_gasPrice` / `eth_getCode` (the relay never
+  asked for them; the deployer does). `eth_gasPrice` returns the latest block's `base_fee_per_gas`
+  rather than an invented number, because py-evm rejects a legacy transaction priced below the base
+  fee — "Sender's max fee per gas (0) is lower than block's base fee per gas (875000000)".
+- **`eth-abi` takes `bytes` for `bytes32`, but a hex string for `address`.** Passing a hex string
+  for `bytes32` fails inside the encoder with a message naming the *value*, not the argument.
+- **A receipt can be visible before `eth_call … "latest"` sees its effect.** Immediately after the
+  deposit's receipt came back, a read of `deposits(deployer)` returned `0` while a read of the
+  pool's *balance*, in the same second, returned `1e14`. Both are plain state reads of the same
+  contract. A public load-balanced RPC can serve consecutive requests from nodes at different
+  heads, so a read taken right after a receipt can legitimately describe the pre-transaction state.
+  Pinned to the receipt's own block, the mapping reads `1e14`, and the block before it reads `0`.
+  Any read that must be final should name the block, not `"latest"`.
+- **The pool's attester accessor is `isAttester(address)`, not `attesters(address)`.** Assumed from
+  the constructor parameter name; the structural selector check said `false` and the `eth_call`
+  reverted. The same check says `true` for `isAttester(address)` and `freezeFromAttestation(...)`
+  and `false` for `freeze(string,uint256)` — which is what makes the structural check worth having.
 
 - **A killed deploy script is not a failed deploy.** `timeout 280` killed
   `deploy/deploy_studio_dev.py` (exit 124) *after* its transaction was submitted, and that

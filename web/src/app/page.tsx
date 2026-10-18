@@ -25,7 +25,12 @@ import { Pivot } from "@/components/Pivot";
 import { Providers } from "./providers";
 import { refetchPolicy } from "@/lib/chain";
 
-const DEFAULT_CASE = "live-drain-run2";
+// The case this page tracks LIVE, over the contract in NEXT_PUBLIC_HALT_ADDRESS -- so it has to
+// be a case that exists on the CURRENT deployment. The recorded replay elsewhere on this page
+// (`sample-run.json`) is a dated transcript of earlier adjudications and keeps its own case ids;
+// after the 2026-10-17 redeployment those no longer exist on chain, which is why the two sets of
+// ids differ here.
+const DEFAULT_CASE = "live-drain-run3";
 
 type Tracked = {
   caseId: string;

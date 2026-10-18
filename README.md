@@ -108,9 +108,20 @@ times inside one transaction.
 
 ## Live results
 
-Deployed and verified against Studionet (chain 61999):
+Deployed and verified against Studionet (chain 61999) and Base Sepolia (84532):
 
-**Contract:** `0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774b`
+**Contract:** `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` · **pool:**
+`0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` — both redeployed 2026-10-17 onto fresh throwaway
+keys, and both verified against their own chains rather than against a deploy script's output
+(`cd web && node scripts/verify-live.mjs` prints expected vs actual, exit 0 on pass).
+
+Current deployment:
+
+| Case | Input | Verdict | Evidence | Result |
+|---|---|---|---|---|
+| `live-drain-run3` | a real `deposit()` into the live pool, claimed as a full drain | `FALSE_REPORT` | `found=True status=0x1 value=SMALL logs=FEW to=0x9e6c83c8…` | nothing frozen — the attestation step **refused to sign** (`verdict is 'FALSE_REPORT', not CONFIRMED_EXPLOIT`) |
+
+The rows below are the previous deployment's runs, kept as they were observed there:
 
 | Case | Input | Verdict | Evidence | Result |
 |---|---|---|---|---|
@@ -180,7 +191,7 @@ deploy/attest.py                 signs one adjudicated freeze (the only attester
 deploy/freeze_watcher.py         verifies and relays a signed freeze (holds no attester key)
 demo-target/src/HaltablePool.sol the EVM target: attestation-only pause, self-lifting expiry
 docs/integration.md              how another protocol plugs this in
-tests/direct/                    hermetic suite: 198 tests, no network
+tests/direct/                    hermetic suite: 206 tests, no network
 web/                             Next.js 15 frontend (landing narrative + console)
 web/src/lib/content.ts           every user-visible string and number, no JSX literals
 web/src/lib/sample-run.json      a real recorded adjudication, timings included
@@ -209,7 +220,7 @@ while the deploy scripts want a current SDK — see `deploy/README.md`.
 
 ## Tests
 
-`uv run pytest tests/direct/ -v` → **198 passed**. ~75s on an idle machine; budget a few
+`uv run pytest tests/direct/ -v` → **206 passed**. ~50s on an idle machine; budget a few
 minutes if something else is loading the box. The test count is the stable number, not the
 wall clock.
 
@@ -303,9 +314,10 @@ MergeProof; the comparison against them is in `docs/integration.md`.
 
 This was the one gap touching the headline claim. It is now **tested, and the answer is no.**
 
-`HaltablePool.sol` (Base Sepolia, `0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B`) is a deployed
-pausable pool. A probe contract (`contracts/probe_emit.py`, on Studionet) called the identical
-emit path the product uses. Result:
+`HaltablePool.sol` is deployed on Base Sepolia — currently at
+`0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e`; the probe below ran against the earlier deployment,
+`0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B`. A probe contract (`contracts/probe_emit.py`, on
+Studionet) called the identical emit path the product uses. Result:
 
 ```
 GenLayer tx   : FINALIZED, MAJORITY_AGREE
@@ -328,7 +340,7 @@ Full evidence: `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`.
 
 ### So the last hop is off-chain, and here is the honest cost
 
-The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 198
+The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 206
 hermetic tests plus live consensus runs. **Delivery of the freeze to an EVM contract is not**,
 and since 2026-10-17 the contract no longer attempts it: the `emit` calls were **removed** rather
 than left in place, so nothing in the contract can report a delivery that did not happen.

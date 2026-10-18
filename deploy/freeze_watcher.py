@@ -17,12 +17,12 @@ stops recovering to the attester, and the pool refuses the call.
 
 WHY `client.read_contract` IS GONE
 ----------------------------------
-The previous version read through `genlayer_py`'s client and was documented as failing. Two
-independent defects, both in `state/MEMORY.md`: 0.18.0 reports the live contract as not found
-at the correct endpoint, correct chain and correct address while `genlayer-js` reads it; and
-`read_contract` raises unless an account is connected, so reading PUBLIC state required a
-GenLayer key. This version encodes with the SDK (still reliable for calldata) and does the
-transport itself over plain HTTPS, keyless.
+The previous version read through `genlayer_py`'s client. `read_contract` raises unless an
+account is connected, so reading PUBLIC state required a GenLayer key — the structural reason,
+still true. On top of that, 0.18.0 reported an earlier deployment as not found at the correct
+endpoint, correct chain and correct address while `genlayer-js` read it (twice; it did not
+reproduce against the redeployment on 2026-10-17). This version encodes with the SDK and does
+the transport itself over plain HTTPS, keyless. Both facts are in `state/MEMORY.md`.
 
 VERIFY AGAINST THE TARGET, NEVER THE RETURN VALUE
 -------------------------------------------------
@@ -73,7 +73,7 @@ from attestation import (  # noqa: E402
 )
 from genlayer_read import GenLayerReadError, GenLayerReader, studionet_rpc_url  # noqa: E402
 
-DEFAULT_HALT_ADDRESS = "0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774B"
+DEFAULT_HALT_ADDRESS = "0x95be4d883F89F28CF9cE986e1B400c8CB0808201"
 ATTESTER_ADDRESS_ENV = "CORDON_ATTESTER_ADDRESS"
 
 FREEZE_FROM_ATTESTATION_SIG = "freezeFromAttestation(bytes32,bytes32,bool,uint256,bytes)"

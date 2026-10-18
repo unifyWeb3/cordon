@@ -335,13 +335,15 @@ of our host during testing, and a host-computed deadline was already in the past
 transaction landed. Both programs take `expires_at` from the record and the *target chain's* latest
 block timestamp for the "is this window still open" check.
 
-**A note on the read path.** `genlayer-py` 0.18.0 reports the live contract as `not found`
+**A note on the read path.** `genlayer-py` 0.18.0 reported an earlier deployment as `not found`
 (`gen_call failed (code=-32001)`) at the correct endpoint, chain and address, while `genlayer-js`
-reads the same contract; and `read_contract` raises unless an account is connected, so reading
-public state through the SDK client would need a GenLayer key. `deploy/genlayer_read.py` therefore
-keeps the SDK's calldata encoder (still reliable) and does the transport itself over plain HTTPS
-with no account and no key. This defect is unfixed, so treat a Python-SDK "contract not found" as
-a reader bug rather than an on-chain fact.
+read it — reproduced twice, and it did not reproduce against the redeployed contract on
+2026-10-17, where the same SDK version read both the schema and `stats()`. So treat a Python-SDK
+"contract not found" as a reader bug rather than an on-chain fact, but do not assume the SDK is
+broken in general. The structural reason to read keyless is separate and permanent: the SDK's
+`read_contract` raises unless an account is connected, so reading public state through the client
+would need a GenLayer private key. `deploy/genlayer_read.py` therefore keeps the SDK's calldata
+encoder and does the transport itself over plain HTTPS with no account and no key.
 
 Ship both programs in your repo, not as a hosted dependency.
 
@@ -394,6 +396,7 @@ carries a self-expiring, consensus-gated freeze. The live projects we found do n
 - We ran against Studionet, not studio-dev, because studio-dev could not execute contracts
   when we tested (deploy/README.md).
 - Live GenLayer reads are made by `deploy/genlayer_read.py` rather than the Python SDK client,
-  because `genlayer-py` 0.18.0 reports the live contract as not found at the correct endpoint,
-  chain and address. That defect is unfixed upstream, and the write path would hit it too.
+  because the SDK's read path requires a connected account — i.e. a GenLayer private key — to read
+  public state. A separate `not found` failure in `genlayer-py` 0.18.0 was observed against an
+  earlier deployment, twice, and did not reproduce against the current one.
 - We have no paying user. Treat this as a proposal.
