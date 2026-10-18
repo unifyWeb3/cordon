@@ -90,6 +90,20 @@ _NUMERIC = {
     "chain_id",
 }
 
+# The other direction: eth-tester's receipt keys -> the names a node puts on the wire.
+_RECEIPT_FIELDS = {
+    "block_hash": "blockHash",
+    "block_number": "blockNumber",
+    "contract_address": "contractAddress",
+    "cumulative_gas_used": "cumulativeGasUsed",
+    "effective_gas_price": "effectiveGasPrice",
+    "gas_used": "gasUsed",
+    "logs_bloom": "logsBloom",
+    "state_root": "stateRoot",
+    "transaction_hash": "transactionHash",
+    "transaction_index": "transactionIndex",
+}
+
 
 def _to_tester_tx(tx: dict) -> dict:
     """JSON-RPC (camelCase, hex-quantity) -> eth-tester (snake_case, int)."""
@@ -130,6 +144,21 @@ def py_evm_handler(tester) -> Callable[[str, list], Any]:
                 }
             )
 
+        if method == "eth_gasPrice":
+            # A real node quotes what the next block needs, and py-evm enforces it: a legacy
+            # transaction whose gas_price is below the block's base fee is rejected outright
+            # ("Sender's max fee per gas (0) is lower than block's base fee per gas"). So this is
+            # read from the chain rather than invented. The relay never asks -- it sends a fixed
+            # 1 gwei -- but `deploy/deploy_target.py` does, because a deployment should not carry
+            # a price that only happens to work.
+            block = tester.get_block_by_number("latest")
+            return _hex(block.get("base_fee_per_gas") or 1_000_000_000)
+
+        if method == "eth_getCode":
+            address = params[0]
+            block = params[1] if len(params) > 1 else "latest"
+            return _jsonify(tester.get_code(address, block))
+
         if method == "eth_call":
             tx = _to_tester_tx(params[0])
             # Substituted, not preserved: see the module docstring. The tests assert the real
@@ -168,7 +197,12 @@ def py_evm_handler(tester) -> Callable[[str, list], Any]:
                 return None
             if receipt is None:
                 return None
-            out = dict(receipt)
+            # eth-tester spells its receipt keys in snake_case; a node spells them in camelCase,
+            # and the translation belongs here rather than in the client -- same reason the relay
+            # sends `gasPrice` and not `gas_price`. A client that read `contract_address` would
+            # fail only on the live chain. `deploy/deploy_target.py` reads `contractAddress` out
+            # of this receipt, which is how the gap was found.
+            out = {_RECEIPT_FIELDS.get(key, key): value for key, value in receipt.items()}
             out["status"] = _hex(int(receipt["status"]))
             out["gasUsed"] = _hex(int(receipt.get("gas_used", 0)))
             out["blockNumber"] = _hex(int(receipt["block_number"]))
