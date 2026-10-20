@@ -92,6 +92,36 @@ Env names only: `CORDON_ATTESTER_PRIVATE_KEY`, `CORDON_ATTESTER_ADDRESS`, `GENLA
   200, `0x0`; `eth_getTransactionCount` → `0x0`. **Zero. Stopped here on purpose** — no polling,
   no faucet automation.
 
+### Also done while waiting for ETH (all independent of Base Sepolia funding)
+
+* **genvm-lint, documented command:** `.venv/bin/genvm-lint check contracts/emergency_halt.py`
+  → `✓ Lint passed (3 checks)` / `✗ Validation failed / Failed to load SDK: HTTP Error 404`,
+  exit **1**. That is the known upstream asset rename recorded above, reproduced today.
+* **genvm-lint, supported path:** `GENVMROOT=/tmp/opencode/genvmroot .venv/bin/genvm-lint check
+  contracts/emergency_halt.py` → `✓ Lint passed (3 checks)`, `✓ Validation passed`,
+  `Contract: EmergencyHalt`, `Methods: 11 (6 view, 5 write)`, exit **0**.
+  The root already existed and was **not** hand-seeded. Its pairing was checked rather than
+  assumed: the contract pins `py-genlayer:1jb45aa8…`, that runner's own `runner.json` says
+  `Depends py-lib-genlayer-std:11rhn002yfajawsz7fai6mykznbxkxs6l91iskj5cm82c92qhy3v`, and
+  `readlink -f $GENVMROOT/runners/py-lib-genlayer-std/src` is exactly that directory under
+  `~/.cache/gltest-direct/extracted/v0.2.16`. Lint and validation therefore ran against the SDK
+  the contract pins, not against an arbitrary one.
+* **Frontend:** `npm install` (323 packages), `tsc --noEmit` exit 0, `next build` exit 0 under
+  Next.js 15.5.27. The first build **failed by design** with
+  `NEXT_PUBLIC_GENLAYER_RPC is missing` — the no-fallback guard doing its job. A gitignored
+  `web/.env.local` (mode 600, `git check-ignore` → `.gitignore:6`) was created for the local
+  build; no value from it is printed anywhere. **The deployed Vercel app's env has not been
+  touched** — changing the pool address there needs a dashboard/token this session does not have,
+  so that stays a named human step, not a silent omission.
+* **Wrong-pool control, simulated (no gas, no state change):** an attestation signed by the new
+  attester for pool `0x…dEaD` (`case negative-different-pool`, expiry 1800000000) was passed to
+  the live pool's `freezeFromAttestation` via `eth_call`. This pool's own
+  `attestationDigest(...)` for the same arguments is a different 32 bytes
+  (`0xce564c93…` vs the signed `0xc87f1aee…`), `ecrecover` against it yields
+  `0xce5438ae654e145E3d3c2C3caD930Fe6539464c8` — not the attester — and the call reverts
+  **`unknown attester`**. The same control must be re-run as a broadcast transaction against the
+  new pool once it exists; the simulated result is what makes the digest binding visible here.
+
 ### Resume: the funding gap
 
 **Human action needed: send Base Sepolia ETH to `0x725Cd4d9E1fA6Cbcd7D49972415531AD5A793ad7`.**
