@@ -1,6 +1,134 @@
 # Memory — durable decisions and constraints
 
-Updated 2026-10-17.
+Updated 2026-10-20.
+
+## 2026-10-20 — freeze-authentication merged; deployed source proven identical; BLOCKED on Base Sepolia ETH
+
+Read this first if a session was dropped. Everything below this section was observed, and the
+next step is one human action. (The numbers here are *this* task's stages; the "Stage 4" headings
+further down are the 2026-10-17 work, which is unrelated numbering.)
+
+### Stage 1 — merge, DONE
+
+Default branch is `main` (`git remote show origin` → `HEAD branch: main`).
+`freeze-authentication` was merged with an ordinary merge commit, no force-push, no rewrite:
+`4e3db4d merge: freeze-authentication into main` (parents `1192122` + `86e8529`), pushed
+(`86e8529..4e3db4d`). Clean-worktree suite at `/tmp/opencode/wt-clean` (detached at `4e3db4d`,
+`demo-target/node_modules` reinstalled because it is gitignored):
+`206 passed in 81.88s`, exit 0, **no skips**.
+
+### Stage 2 — submitted vs deployed, DONE, both MATCH. No redeploy needed.
+
+* **Intelligent Contract.** `gen_getContractCode` (raw keyless JSON-RPC) for
+  `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` → base64 → 32,289 bytes,
+  sha256 `813dc8972406b195be14980e2b9ddf22d9276372837d8beb66339d7ec924be96`. The file
+  `contracts/emergency_halt.py` on `main` is the same 32,289 bytes with the same sha256. **Byte
+  identical**, so the steward's "align the submitted deployment with the corrected source" is
+  satisfied by proof rather than by a redeploy, and the live cases plus the Vercel app keep
+  pointing at a contract whose code is the repo's code.
+* **Target pool.** New tool `deploy/verify_pool_code.py` (same compile command as
+  `deploy_target.compile_pool`). Against `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e`:
+  live runtime 4,646 bytes, sha256 `0187508f229188cf697f1cff6a179f3d9115179ccb03f7680a007cf5db967a60`,
+  keccak256 `0x810895215453a31adaf1349efc5368b2e41fed1979635c5a2aa9fecb3e552331`; equal to a
+  fresh compile **outside the four immutable slots**, each of which holds the value this pool
+  should have (`attesterCount=1`, `MAX_WINDOW=3600` ×2, `DOMAIN_SEPARATOR` =
+  `0xe119defd…ee517344`, recomputed from chain id 84532 + the pool address). The metadata blob
+  matched too, which is what pins source + compiler + optimizer settings. Exit 0.
+  **Cannot be proven from a chain read:** that the creation *transaction* carried this bytecode
+  (no `debug_traceTransaction` on the public RPC), nor when/by whom it was sent.
+  **The new pool must be verified the same way after it is deployed.**
+
+Landmines found while adding that tool (all new):
+
+* `solcjs --standard-json` reads **stdin**; passing a file path silently compiles an empty
+  document and exits 0 with a JSON `JSONError` you have to read.
+* **A `solcjs` stdout pipe truncates.** It writes its JSON with async `process.stdout.write` and
+  exits; through a pipe we got 65,618 of 248,104 bytes (parsed as "unterminated string"), while
+  shell redirection to a file gave the full document. Capture to a file, never `capture_output`.
+* **The metadata hash depends on the source key string.** Compiling the same bytes as
+  `HaltablePool.sol` vs `demo-target/src/HaltablePool.sol` vs the absolute path gives three
+  different metadata hashes; only the path *as passed on the CLI*, which is what
+  `deploy_target.py` does, reproduces the on-chain blob. A "same length" or "same opcodes"
+  comparison would have missed this.
+* `solcjs` in this pinned npm build has no `--bin-runtime`; `deployedBytecode` comes from
+  standard-JSON, and the creation code's tail is what proves the two compiles agree.
+
+### Stage 3 — keys exist, GenLayer side exercised, **STOPPED: Base Sepolia key is unfunded**
+
+Fresh throwaway keys written to `/root/cordon/.env`, mode 600, covered by `.gitignore:2`
+(`git check-ignore -v .env` → `.gitignore:2:.env`), untracked, never printed. Addresses only:
+
+| Role | Address |
+|---|---|
+| attester | `0xaA1444844a653943634b0F3621C62A942a8E3D73` |
+| GenLayer submitter (also the IC's deployer if we ever redeploy) | `0x503800d25EAc018C147A24150C8554dCa916d057` |
+| Base Sepolia deployer **and** relay gas payer (also the new pool's `owner`) | `0x725Cd4d9E1fA6Cbcd7D49972415531AD5A793ad7` |
+
+Env names only: `CORDON_ATTESTER_PRIVATE_KEY`, `CORDON_ATTESTER_ADDRESS`, `GENLAYER_PRIVATE_KEY`,
+`GENLAYER_ADDRESS`, `BASE_SEPOLIA_PRIVATE_KEY`, `BASE_SEPOLIA_ADDRESS`, `BASE_SEPOLIA_RPC_URL`.
+
+* `.venv-deploy` did not exist and was rebuilt exactly as recorded above
+  (`uv venv .venv-deploy --python 3.12 && uv pip install --python .venv-deploy/bin/python
+  genlayer-py==0.18.0 requests python-dotenv`). `.venv` is `uv sync` from the pinned manifest.
+* **GenLayer funding:** `sim_fundAccount(0x5038…d057, 10**18)` → HTTP 200, result
+  `0x9a871045051161df1ce685c4693e96f6d43ba0e147a6ac545afbee5de801e888`;
+  `eth_getBalance` then `1000000000000000000` wei.
+* **The GenLayer write path is exercised live with the new key.** Case `preflight-run4`
+  (a real deposit tx on the *current* pool, `0xd7a4c3addab0ad13272753d5d99a5c8e7a77b462d0ce30c5d71c6243e2003f67`,
+  submitted with `--target 0x9e6c83C8…`): GenLayer tx
+  `0xcc16bc98d2bfc9a69f65b6a392cc666ffa8d101c938e0e74fadccda53f6fa402`,
+  `FINALIZED`, `MAJORITY_AGREE`, verdict `FALSE_REPORT`, evidence
+  `found=True status=0x1 value=SMALL logs=FEW to=0x9e6c83c8…`. So consensus, the `jsonrpc`
+  evidence fetch and the configured public RPC all still work end to end.
+* **The live IC's read method names are bare** (`stats`, `list_cases`, `get_evidence` with args).
+  `stats()` — with the parentheses — is rejected by the node as a call to a private method. The
+  earlier prose in this file that wrote `stats()` was notation, not the wire form; the code in
+  `deploy/genlayer_read.py` and the frontend was always right.
+* The IC's `owner` is still the **dead** key `0x7b1860d2…`. Consequence, accepted and now
+  documented: `set_evidence_rpc`, `set_evidence_url_template` and `set_default_freeze_seconds`
+  cannot be called by anyone. Nothing in the lifecycle needs them — the constructor already set
+  `evidence_mode="jsonrpc"` and the Base Sepolia public RPC, verified live by `preflight-run4`.
+* **Base Sepolia balance check, one read:** `eth_getBalance(0x725Cd4d9…3ad7, "latest")` → HTTP
+  200, `0x0`; `eth_getTransactionCount` → `0x0`. **Zero. Stopped here on purpose** — no polling,
+  no faucet automation.
+
+### Resume: the funding gap
+
+**Human action needed: send Base Sepolia ETH to `0x725Cd4d9E1fA6Cbcd7D49972415531AD5A793ad7`.**
+It is the pool's deployer, the relay and the pool's `owner`; 0.05 ETH is ample (the previous pool's
+creation cost ~0.03 gwei × 1.1M gas, and the lifecycle adds ~8 more transactions).
+
+Exact next step once it is funded — one balance read, then:
+
+1. `.venv-deploy/bin/python deploy/deploy_target.py --attester 0xaA1444844a653943634b0F3621C62A942a8E3D73 --max-window 3600 --out deploy/out/pool-2026-10-20.json` (the script writes the record before broadcasting, and re-reads every constructor value off the chain).
+   Then `deploy/verify_pool_code.py --address <new pool>` — the same code proof as above, now
+   against the new deployment.
+2. The staged drain, on our own testnet pool, labelled as such everywhere: deposit the entire
+   balance from one key, then **one** `withdraw(all)` so the pool's balance goes to zero in a
+   single transaction. That is the only drain the pool's real functions permit: `withdraw` pays
+   `msg.sender` and is capped at `deposits[msg.sender]`, and there is no owner sweep, so nothing
+   else can move the pool's ETH. State the claim exactly that way (`preflight-run4`'s style:
+   say it is our own pool, that it is a staged test, and what the transaction does) — **do not
+   word it as an unauthorised theft**, because it is not one.
+   **Honest risk, recorded before the run:** consensus may well answer `FALSE_REPORT`, because
+   the digest for a withdrawal carries `value_band=ZERO`, `log_band=FEW` and the `withdraw`
+   selector, i.e. it looks like ordinary protocol activity, and the two prior live cases with a
+   drain-shaped claim came back `FALSE_REPORT`. If it does, the instruction is explicit: say so
+   and stop that stage rather than inventing one.
+3. Controls, all live and all recorded with hashes: replay of the same attestation (same deadline
+   → accepted idempotently or refused as `cannot extend a live freeze`; a later deadline → refused);
+   an attestation signed for a **different pool** → `unknown attester`; the drain tx submitted with
+   `--target` set to an address the tx did not touch → `INSUFFICIENT_EVIDENCE` by the contract's own
+   target binding, and `attest.py` refuses to sign a non-`CONFIRMED_EXPLOIT` record anyway.
+4. Read back `isFrozen()` / `frozenUntil()` **at the freeze transaction's own block** (a public
+   load-balanced RPC can serve consecutive requests from different heads — see the 2026-10-17
+   landmine) and show `frozenUntil == the signed expiresAt` exactly. Base Sepolia's clock runs
+   ~53 s ahead of this host, so every deadline comes from chain time.
+5. If the window still has ≥10 minutes, wait it out and read `isFrozen()` false afterwards with
+   no transaction sent; otherwise record that expiry was not observed live.
+6. Then update the pool address everywhere (`deploy/attest.py::DEFAULT_TARGET`,
+   `deploy/out/*.json`, `state/*`, `README.md`, `AGENTS.md`, `docs/*`, `web/` env vars), leave the
+   dated transcripts alone, and write the transcript into `docs/`.
 
 ## Stage 4 — live redeployment onto fresh keys, DONE (2026-10-17)
 
