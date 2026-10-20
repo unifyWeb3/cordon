@@ -110,18 +110,25 @@ times inside one transaction.
 
 Deployed and verified against Studionet (chain 61999) and Base Sepolia (84532):
 
-**Contract:** `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` · **pool:**
-`0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` — both redeployed 2026-10-17 onto fresh throwaway
-keys, and both verified against their own chains rather than against a deploy script's output
-(`cd web && node scripts/verify-live.mjs` prints expected vs actual, exit 0 on pass).
+**Contract:** `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` (Studionet; source-proven identical to
+`main` on 2026-10-20) · **pool:** `0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E` (Base Sepolia;
+deployed 2026-10-20 with an attester key this project holds, runtime verified against a fresh
+compile outside its immutables). `cd web && node scripts/verify-live.mjs` prints expected vs
+actual, exit 0 on pass.
 
-Current deployment:
+The previous pool `0x9e6c83C8…` is still on chain but its owner key is dead and its attester is not
+one we hold, so it cannot be frozen by anyone. It is history, not a live target.
+
+Current deployment (2026-10-20 — every hash is in
+[`docs/live-run-2026-10-20.md`](docs/live-run-2026-10-20.md)):
 
 | Case | Input | Verdict | Evidence | Result |
 |---|---|---|---|---|
-| `live-drain-run3` | a real `deposit()` into the live pool, claimed as a full drain | `FALSE_REPORT` | `found=True status=0x1 value=SMALL logs=FEW to=0x9e6c83c8…` | nothing frozen — the attestation step **refused to sign** (`verdict is 'FALSE_REPORT', not CONFIRMED_EXPLOIT`) |
+| `staged-drain-plain` | a real `deposit()` and then one `withdraw(all)` that **emptied the pool** — a true drain of our own testnet pool, labelled as staged | `FALSE_REPORT` | `found=True status=0x1 value=ZERO logs=FEW rep=` | nothing frozen, **and correctly so**: a truthfully labelled staged test is not an unauthorised drain, and `withdraw` sends no ETH itself, so the digest cannot show the outflow |
+| `control-wrong-to` | a real tx that emptied the pool through a forwarding harness, submitted with `target` = the pool while `tx_to` = the harness | `INSUFFICIENT_EVIDENCE` | `found=True value=SMALL logs=SOME rep=0xc36b5179…` | nothing frozen; also the run's live proof that `repeated_selectors` populates when a receipt really has repeated events |
 
-The rows below are the previous deployment's runs, kept as they were observed there:
+The rows below belong to the earlier deployment (2026-10-17, old pool), kept as they were observed
+there:
 
 | Case | Input | Verdict | Evidence | Result |
 |---|---|---|---|---|
@@ -310,12 +317,28 @@ MergeProof; the comparison against them is in `docs/integration.md`.
 
 ## Tested, and found broken
 
+### The evidence digest cannot see an ETH outflow. Tested 2026-10-20.
+
+`value_band` is the **transaction's own** `msg.value`, and the digest carries no balance and no
+transferred amount. `withdraw()` is not payable, so a complete drain of the ETH demo pool is
+`value=ZERO logs=FEW rep=`. Adjudicated live as `staged-drain-plain` → `FALSE_REPORT`, rationale:
+*"ZERO value magnitude band, indicating no significant ETH transfer ... ordinary, authorized
+protocol activity"*.
+
+The gap is structural, not a tuning problem: a transaction to the pool executes exactly one
+function, the pool emits exactly one event per successful call, and the target binding requires
+`evidence.tx_to == target` — so for every binding-valid case `repeated_selectors` is empty and
+`log_band <= FEW`, while a withdrawal's `value_band` is always `ZERO`. **No honest live
+`CONFIRMED_EXPLOIT` is reachable on this target**, so the attested freeze, the replay control and
+expiry were not exercised live; they remain proven on an EVM by `tests/direct/test_haltable_pool.py`.
+Full hashes, both controls and the argument: `docs/live-run-2026-10-20.md`.
+
 ### EVM `emit()` does not deliver. Tested 2026-10-02, not assumed.
 
 This was the one gap touching the headline claim. It is now **tested, and the answer is no.**
 
 `HaltablePool.sol` is deployed on Base Sepolia — currently at
-`0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e`; the probe below ran against the earlier deployment,
+`0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E`; the probe below ran against the earlier deployment,
 `0xDF9Ba466540D2Fe4a62650f4d849231a2cb32b7B`. A probe contract (`contracts/probe_emit.py`, on
 Studionet) called the identical emit path the product uses. Result:
 

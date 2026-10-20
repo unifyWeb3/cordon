@@ -289,6 +289,13 @@ not facts. After the transaction lands it reads `frozenUntil()` back from the po
 to equal the signed deadline exactly, because a status-1 receipt only proves the call did not
 revert.
 
+**A dated live run, including where it stops:** `docs/live-run-2026-10-20.md` walks the whole path
+on our own testnet deployments with every hash and a re-verification command for each read. It
+stops before an attested freeze, and says why: the evidence digest carries the transaction's own
+`msg.value` and no balance, so a real drain of the ETH demo pool is `value=ZERO`; and a truthfully
+labelled staged test is not an unauthorised drain, so `FALSE_REPORT` is the honest verdict for it.
+Do not read that transcript as evidence that a live freeze has occurred.
+
 **State this trade to your users, precisely.** With one attester configured this is *still a single
 key*: compromise it and it can freeze, bounded by `MAX_WINDOW`, with no exploit at all. What the
 design changes is that the key can no longer freeze *unattributably*. The signature names the case,

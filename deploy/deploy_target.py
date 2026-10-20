@@ -108,12 +108,20 @@ def _as_encoded(type_: str, value):
 
 
 def compile_pool() -> tuple[list, str]:
-    """`demo-target/src/HaltablePool.sol` -> (abi, bytecode). Fresh, never from `out/`.
+    """`demo-target/src/HaltablePool.sol` -> (abi, bytecode). Fresh, never from `out/`."""
+    return compile_source(POOL_SOURCE, "HaltablePool")
+
+
+def compile_source(source: Path, artifact: str | None = None) -> tuple[list, str]:
+    """One Solidity file -> (abi, bytecode). Fresh, never from `out/`.
 
     Same rule as `tests/direct/evm_harness.py`: an empty directory, one compiler invocation, take
     whatever single artifact appears, fail loudly on anything else. `solcjs` names its output
     after the input path *as it was handed to the compiler*, so the artifact name is never
     constructed by hand.
+
+    `artifact` names the contract to take when the file declares more than one (interfaces and
+    test harnesses do). Without it the compile must yield exactly one artifact.
     """
     solc = str(SOLC_JS) if SOLC_JS.exists() else shutil.which("solcjs")
     if not solc:
@@ -121,23 +129,23 @@ def compile_pool() -> tuple[list, str]:
             f"no compiler: neither {SOLC_JS} nor a `solcjs` on PATH. "
             "Run `npm install` in demo-target/ (it pins solc 0.8.24)."
         )
-    if not POOL_SOURCE.exists():
-        raise RefusedToDeploy(f"pool source not found: {POOL_SOURCE}")
+    if not source.exists():
+        raise RefusedToDeploy(f"source not found: {source}")
 
     OUT_ROOT.mkdir(parents=True, exist_ok=True)
     out = Path(tempfile.mkdtemp(prefix="deploy-", dir=OUT_ROOT))
     result = subprocess.run(
-        [solc, "--bin", "--abi", "--optimize", "-o", str(out), str(POOL_SOURCE)],
+        [solc, "--bin", "--abi", "--optimize", "-o", str(out), str(source)],
         capture_output=True,
         text=True,
         cwd=str(ROOT),
     )
-    abi_files = sorted(out.glob("*.abi"))
-    bin_files = sorted(out.glob("*.bin"))
+    abi_files = sorted(out.glob(f"*_{artifact}.abi" if artifact else "*.abi"))
+    bin_files = sorted(out.glob(f"*_{artifact}.bin" if artifact else "*.bin"))
     if result.returncode != 0 or len(abi_files) != 1 or len(bin_files) != 1:
         produced = ", ".join(sorted(p.name for p in out.iterdir())) or "nothing"
         raise RefusedToDeploy(
-            f"solc did not produce exactly one artifact for {POOL_SOURCE.name} "
+            f"solc did not produce exactly one artifact for {source.name} "
             f"(exit={result.returncode}, abi={len(abi_files)}, bin={len(bin_files)}, "
             f"produced: {produced})\n--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"
         )
@@ -195,33 +203,42 @@ class Rpc:
     def nonce(self, address: str) -> int:
         return self.uint("eth_getTransactionCount", [address, "pending"])
 
-    def code(self, address: str) -> str:
-        code = self.call("eth_getCode", [address, "latest"])
+    def code(self, address: str, block: str = "latest") -> str:
+        code = self.call("eth_getCode", [address, block])
         return code if isinstance(code, str) else "0x"
 
     def send_raw(self, raw: str) -> str:
         return self.call("eth_sendRawTransaction", [raw])
 
-    def call_contract(self, to: str, signature: str, args: list | None = None) -> str:
+    def call_contract(
+        self, to: str, signature: str, args: list | None = None, block: str = "latest"
+    ) -> str:
         """`to` + a Solidity signature (optionally with arguments) -> the raw return data.
 
         The argument types come from the signature itself, so a read here cannot disagree with
         the selector that was hashed from it.
+
+        `block` exists because `"latest"` is not a fact: a public load-balanced endpoint can
+        answer consecutive requests from nodes at different heads, so a read taken immediately
+        after a receipt can describe the state *before* the transaction. A verification that
+        must be final names the receipt's own block.
         """
         data = "0x" + selector(signature)
         if args:
             types = [t.strip() for t in signature[signature.index("(") + 1 : -1].split(",")]
             data += abi_encode(types, [_as_encoded(t, v) for t, v in zip(types, args)]).hex()
-        out = self.call("eth_call", [{"to": to, "data": data}, "latest"])
+        out = self.call("eth_call", [{"to": to, "data": data}, block])
         if not isinstance(out, str) or len(out) <= 2:
-            raise RuntimeError(f"{signature} returned nothing at {to}")
+            raise RuntimeError(f"{signature} returned nothing at {to} (block {block})")
         return out
 
-    def read_uint(self, to: str, signature: str, args: list | None = None) -> int:
-        return int(self.call_contract(to, signature, args), 16)
+    def read_uint(
+        self, to: str, signature: str, args: list | None = None, block: str = "latest"
+    ) -> int:
+        return int(self.call_contract(to, signature, args, block=block), 16)
 
-    def read_address(self, to: str, signature: str) -> str:
-        raw = bytes.fromhex(self.call_contract(to, signature)[2:])
+    def read_address(self, to: str, signature: str, block: str = "latest") -> str:
+        raw = bytes.fromhex(self.call_contract(to, signature, block=block)[2:])
         return to_checksum_address(raw[-20:])
 
     def receipt(self, tx_hash: str, tries: int = 45, interval: float = 2.0):
@@ -335,10 +352,20 @@ def deploy(
 
 
 def verify_contract(
-    rpc: Rpc, address: str, *, attester: str, max_window: int, deployer: str
+    rpc: Rpc,
+    address: str,
+    *,
+    attester: str,
+    max_window: int,
+    deployer: str,
+    block: str = "latest",
 ) -> list[tuple[str, bool, str]]:
-    """Read the deployed contract back off the chain. Returns [(check, passed, expected vs actual)]."""
-    code = rpc.code(address)
+    """Read the deployed contract back off the chain. Returns [(check, passed, expected vs actual)].
+
+    `block` should be the deployment receipt's own block: see `Rpc.call_contract` on why
+    `"latest"` can still describe the pre-deployment state right after a success receipt.
+    """
+    code = rpc.code(address, block)
     checks: list[tuple[str, bool, str]] = [
         ("runtime code present", len(code) > 2, f"expected >0 bytes, got {len(code) // 2 - 1}"),
     ]
@@ -365,7 +392,7 @@ def verify_contract(
         ("isFrozen()", "isFrozen()", 0, None),
     ]
     for name, signature, expected, args in reads:
-        got = rpc.read_uint(address, signature, args)
+        got = rpc.read_uint(address, signature, args, block)
         checks.append((name, got == expected, f"expected {expected}, got {got}"))
 
     # The function the Python attester has to agree with, read as a call rather than a selector:
@@ -374,6 +401,7 @@ def verify_contract(
         address,
         "attestationDigest(bytes32,bytes32,bool,uint256)",
         ["0x" + "11" * 32, "0x" + "22" * 32, True, max_window],
+        block,
     )
     checks.append(
         (
@@ -383,7 +411,7 @@ def verify_contract(
         )
     )
 
-    owner = rpc.read_address(address, "owner()")
+    owner = rpc.read_address(address, "owner()", block)
     checks.append(
         (
             "owner() is the deployer",
@@ -443,6 +471,9 @@ def main(argv: list[str] | None = None) -> int:
             attester=record["attester"],
             max_window=record["maxWindow"],
             deployer=record["deployer"],
+            # Pinned to the receipt's own block: a load-balanced RPC can otherwise answer this
+            # read from a node whose head predates the deployment (observed 2026-10-20).
+            block=record["blockNumber"] or "latest",
         )
     except (RefusedToDeploy, RuntimeError) as exc:
         print(f"FAILED: {exc}", file=sys.stderr)

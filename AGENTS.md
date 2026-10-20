@@ -2,8 +2,8 @@
 
 GenLayer Intelligent Contract for adjudicated emergency pause on DeFi protocols.
 
-Read `state/MEMORY.md` before touching the SDK or the contract; it carries 14 verified landmines with
-the reasoning. This file is the short version plus the facts that are wrong in places you would not
+Read `state/MEMORY.md` before touching the SDK or the contract; it carries the verified landmines
+with the reasoning. This file is the short version plus the facts that are wrong in places you would not
 think to look.
 
 ## Live deployment
@@ -12,9 +12,14 @@ think to look.
 |---|---|
 | Contract | `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` on Studionet, chain 61999 |
 | Contract explorer | `https://explorer-studio.genlayer.com/address/0x95be4d88…201` |
-| Target protocol | `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` on Base Sepolia |
+| Target protocol | `0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E` on Base Sepolia (deployed 2026-10-20, attester key held) |
 | App | `https://cordon-oxunify.vercel.app` |
 | Headline case | `/case/live-drain-run2` → `INSUFFICIENT_EVIDENCE` |
+| This run’s transcript | `docs/live-run-2026-10-20.md` — every hash, and the negative result in full |
+
+The previous pool `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` is still on chain but its owner key is
+dead and its attester is not one we hold, so **it cannot be frozen by anyone**. Ignore it except as
+history.
 
 **`cordon.vercel.app` is a different project** ("Condor Gaming", another account). Vercel subdomains
 are globally unique. Do not share that URL.
@@ -50,6 +55,14 @@ Also standing:
 - Every live case is `FALSE_REPORT` or `INSUFFICIENT_EVIDENCE`. There is **no** live
   `CONFIRMED_EXPLOIT`, because that is the correct verdict for random public transactions. Do not
   manufacture one.
+- **The evidence digest cannot see an ETH outflow.** It carries the transaction's own `msg.value`,
+  a log count and selectors — no balance and no transferred amount. A real, complete drain of the
+  ETH demo pool was adjudicated live on 2026-10-20 (`staged-drain-plain`) as `FALSE_REPORT`, with
+  `value=ZERO logs=FEW rep=`. Never describe the evidence as showing funds leaving.
+- **A truthfully labelled staged test cannot be `CONFIRMED_EXPLOIT`**, and the same live case shows
+  why: `CONFIRMED_EXPLOIT` means unauthorised. Labelling a test honestly and getting that verdict
+  are mutually exclusive; `docs/live-run-2026-10-20.md` §5 has the full argument and the two
+  observed controls.
 - No claim of beating Kelp's 46-minute response. Consensus takes ~1 minute and is tier-2 judgement
   for ambiguous cases, not a deterministic tripwire.
 - Runtime evidence must be **emitted by the page**, not asserted in prose.

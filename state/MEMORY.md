@@ -2,6 +2,106 @@
 
 Updated 2026-10-20.
 
+## 2026-10-20 (run 2) — new pool with a live attester; the drain did **not** confirm; freeze not exercised live
+
+Read this before the section below: it supersedes its funding blocker and its "current pool". Full
+hashes and reproduction commands: `docs/live-run-2026-10-20.md`. Dated transcripts elsewhere
+(`state/reviews/**`, the older tables in `README.md`, the section below) were **not** rewritten.
+
+### Result in one paragraph
+
+The user funded the Base Sepolia key, so the pool was deployed, drained for real, and adjudicated
+live twice. **No `CONFIRMED_EXPLOIT` was produced, and no freeze was attempted.** That is the
+finding, not an unfinished step: a true, honestly labelled staged drain is `FALSE_REPORT`, and the
+only receipt carrying the drain signature cannot satisfy the target binding. Both were observed.
+Do not "fix" this by signing an attestation for a verdict that does not exist.
+
+### Deployments
+
+* New pool **`0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E`**, tx
+  `0x564af797d8327db2a5269df30cf5fada6aa9ccdf64ef9cbb6624e7e31ed2760f`, block `0x2e1d262`
+  (48,353,890), status `0x1`, gas 1,116,751, attester `0xaA1444…3D73`, `maxWindow=3600`, owner =
+  the Base key. `deploy/attest.py::DEFAULT_TARGET` now names it.
+* **Verification**: `deploy_target.verify_contract` 15/15 at the deployment's own block (not
+  `latest`); `deploy/verify_pool_code.py` → runtime 4,646 bytes, live sha256
+  `8f33da71aa230a3cf8a8f4193b0cf2f4af93969124e4b499a72010e77b90654a`, equal to a fresh compile
+  outside the four immutable slots; `DOMAIN_SEPARATOR`
+  `0x66f849e7618ef19a38590b047332ac801dd7d71da7ff6e201ef456ed967ecacf` recomputed from 84532 +
+  this address. **The old pool `0x9e6c83…` is un-freezable** (dead owner, attester not held).
+* Test-only harness `0xdd9389A0077114B300C1E9Ea9e8a5625F3aAb4B1`, source
+  `deploy/staged/DrainHarness.sol`, tx `0x9d93d9e3…c4a2b3`, block 48,354,471, gas 414,359. Not part
+  of the product; it exists to make a receipt with repeated events for the `tx_to` control.
+
+### The drain (real, staged, labelled)
+
+| Step | Tx | Block | Effect |
+|---|---|---|---|
+| `deposit()` 0.0002 ETH | `0xfbc901aebd2af3f0d9b8e590e6828ff9bdbf586cfe54fb13345c2f1eb19150bf` | 48,354,296 | pool funded |
+| `withdraw(all)` | `0x6f6a2e2dd55c60561e38f56a60d5c6e45f4e7e15605a2653e029883e5334c467` | 48,354,338 | **pool balance 0** |
+
+`withdraw` pays `msg.sender` and is capped at `deposits[msg.sender]`; there is no owner sweep, so
+this is the only complete drain the pool's own functions allow, and one depositor owning everything
+is what makes it complete.
+
+### Adjudications
+
+* **`staged-drain-plain`** — true claim naming the pool as our own staged test. GenLayer tx
+  `0x9c2136cc2ac96e78010d49ac0b85783e5fa4f9a39c20cdbb99bee04060c50de8`,
+  `FINALIZED`/`MAJORITY_AGREE`, **`FALSE_REPORT`**, evidence
+  `emergency-halt/evidence@1|found=1|ok=1|value=ZERO|logs=FEW|to=0xe979…1359e|rep=`.
+  Rationale gives **two independent reasons**: `value_band=ZERO` means "no significant ETH
+  transfer" (the digest measures the tx's own `msg.value`, and `withdraw` is not payable), *and*
+  the claim says it is a self-administered test with no third-party funds, "consistent with
+  ordinary, authorized protocol activity".
+* **`control-wrong-to`** — the harness tx `0x36c29ea2…27f9657` (block 48,354,475, gas 152,552, 4
+  logs) submitted with `target` = pool, `tx_to` = harness. GenLayer tx
+  `0x39a60f695798605ee5973a380521ba53f47775929a941bf9f45a3fbc5cb8ed2a`,
+  **`INSUFFICIENT_EVIDENCE`**, evidence `value=SMALL logs=SOME
+  rep=0xc36b5179cb9c303b200074996eab2b3473eac370fdd7eba3bec636fe35109696` — the only live receipt in
+  this run carrying the repeated-event signature. It is also **not** proof that the contract's
+  `tx_to != target` downgrade fired: the model's own verdict was already insufficient.
+* **`control-wrong-pool`** — attestation signed for the decoy `0x…dEaD`, sent to the real pool:
+  tx `0xe70b456d…0ed11b`, block 48,354,676, status **`0x0`**, gas 31,005, revert
+  `unknown attester`, signer recovered against the pool's digest `0xD3CA23e4…7C65` ≠ attester,
+  `isFrozen/frozenUntil` still 0. Script: `deploy/negative_control.py wrong-pool`.
+
+### Why no honest `CONFIRMED_EXPLOIT` exists here (the load-bearing paragraph)
+
+`attest.py` signs only a finalized `CONFIRMED_EXPLOIT`, and `freezeFromAttestation` requires
+`evidence.tx_to == address(this)`. So a binding-valid case is a transaction **to the pool**; a
+transaction to the pool runs exactly one function and the pool emits exactly one event per call
+(`emit` sites: `Deposited`, `Withdrawn`, `Frozen`, `Unfrozen`), so `repeated_selectors` is always
+empty and `log_band <= FEW`; a withdrawal's own value is 0, so `value_band=ZERO`; and the digest has
+no balance/amount field, so no "the balance moved" claim is checkable. The only complete drain the
+pool permits therefore cannot carry drain evidence, and the receipt that does carry it cannot have
+`tx_to == pool`. Add the semantic point: a truthfully labelled staged test is *not* an unauthorised
+drain, so `FALSE_REPORT` is the correct verdict for it. **Manufacturing a CONFIRMED would require
+either signing for a verdict the contract did not reach or submitting an untrue claim. Neither was
+done and neither should be.** Consequence: attested freeze, replay control, pinned
+`frozenUntil == signed expiresAt`, and expiry were **not** run live; they stay covered by
+`tests/direct/test_haltable_pool.py`. Expiry would not have been observable within 10 minutes
+anyway: `default_freeze_seconds=3600` and the IC owner is dead, so it cannot be shortened.
+
+### Landmine that recurred twice today: `latest` is not a fact
+
+Right after a `status 0x1` receipt, `eth_getCode`/`eth_call` at `latest` returned the **pre-
+transaction** state twice: `attesterCount()` "returned nothing" after the pool deploy, and the pool
+balance printed `200000000000000` after the drain had emptied it. Fix: `deploy/deploy_target.py`
+reads now take `block=` and `main()` pins to the receipt's block; `deploy/negative_control.py`
+retries a block-pinned read 6× before failing; the deploy script's **first** verification failure
+was this, not a bad deployment. When a receipt says success and a read disagrees, name a block.
+
+### Housekeeping / next
+
+* Committed this run: `deploy/verify_pool_code.py`, `deploy/staged_drain.py`,
+  `deploy/negative_control.py`, `deploy/staged/DrainHarness.sol`, the `block=` plumbing in
+  `deploy_target.py`, `docs/live-run-2026-10-20.md`, address updates in `AGENTS.md`, `README.md`,
+  `deploy/attest.py`, `state/LEFT-OFF.md`, this section.
+* `stats()` on the IC at the end of the run: 4 cases, 0 freezes, `default_freeze_seconds=3600`.
+* If someone wants a real live freeze, the fix is a **digest change** (e.g. the receipt's balance
+  delta at `tx_to`, or an evidence bundle a submitter cannot author), which is an IC change and a
+  new deployment. Do not try to reach it by rewording claims or by attacking our own harness.
+
 ## 2026-10-20 — freeze-authentication merged; deployed source proven identical; BLOCKED on Base Sepolia ETH
 
 Read this first if a session was dropped. Everything below this section was observed, and the
