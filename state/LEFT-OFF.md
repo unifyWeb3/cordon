@@ -5,7 +5,7 @@ Updated 2026-10-03.
 ## Status: deployed, public, verified in production. Not submitted.
 
 Live: <https://cordon-oxunify.vercel.app> · Repo: <https://github.com/unifyWeb3/cordon> (public)
-Contract: `0x37E08A26…74b` on Studionet (61999). Target: `0xDF9Ba466…2cb32b7B` on Base Sepolia.
+Contract: `0x95be4d88…201` on Studionet (61999). Target: `0x9e6c83C8…BA91300e` on Base Sepolia.
 
 Verified against the deployed URL, not inferred from a build: `/` 200, `/case/live-drain-run2` 200
 with the live verdict and rationale, unknown case id 404. Evidence and the three deploy blockers are

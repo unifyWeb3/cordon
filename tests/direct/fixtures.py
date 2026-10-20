@@ -17,12 +17,19 @@ import json
 
 BENIGN_SELECTOR = "0xa9059cbb"  # transfer(address,uint256)
 
+# The pool these fixtures' transactions actually called. Every payload carries this as its
+# `to` field, because the contract now refuses to arm a freeze unless the fetched
+# transaction touched the target the submitter named. A fixture whose `to` does not match
+# the submitted `target` is the mismatch case -- see tests/direct/test_target_binding.py.
+TARGET = "0x" + "22" * 20
+
 FIXTURES = {
     "real_exploit": {
         "expect": "CONFIRMED_EXPLOIT",
         "claim": "Attacker drained the bridge with a repeated unbounded transferFrom.",
         "payload": {
             "tx_found": True,
+            "to": TARGET,
             "receipt": {"status": 1, "value": 4.7 * 10**24, "log_count": 41},
             "traces": [
                 {"selector": "0x23b872dd"},
@@ -42,6 +49,7 @@ FIXTURES = {
         "claim": "User withdrew their own tokens through the normal withdrawal path.",
         "payload": {
             "tx_found": True,
+            "to": TARGET,
             "receipt": {"status": 1, "value": 250 * 10**18, "log_count": 2},
             "traces": [
                 {"selector": "0x2e1a7d4d"},
@@ -63,6 +71,7 @@ FIXTURES = {
         ),
         "payload": {
             "tx_found": True,
+            "to": TARGET,
             "receipt": {"status": 1, "value": 3 * 10**18, "log_count": 1},
             "traces": [{"selector": BENIGN_SELECTOR}],
         },
@@ -70,11 +79,22 @@ FIXTURES = {
 }
 
 
-def submit_payload(case_id: str, fixture: dict, evidence_url: str) -> str:
+def submit_payload(
+    case_id: str,
+    fixture: dict,
+    evidence_url: str,
+    target: str | None = None,
+) -> str:
+    """Build a submit_proof payload.
+
+    `target` defaults to the pool the fixture's transaction actually called. Pass a different
+    one to construct the mismatch case: the verdict will still come back CONFIRMED_EXPLOIT
+    from the model, and the contract must downgrade it.
+    """
     return json.dumps(
         {
             "case_id": case_id,
-            "target": "0x" + "22" * 20,
+            "target": target or TARGET,
             "tx_hash": "0x" + "ab" * 32,
             "claim": fixture["claim"],
             "evidence_url": evidence_url,

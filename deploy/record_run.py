@@ -35,7 +35,7 @@ from eth_account import Account  # noqa: E402
 from genlayer_py import create_client  # noqa: E402
 from genlayer_py.chains.studionet import studionet as sn  # noqa: E402
 
-HALT = "0x37E08A2620495DC7C5A82Ef0CB8cDb5213aF774b"
+HALT = "0x95be4d883F89F28CF9cE986e1B400c8CB0808201"
 OUT = ROOT / "web" / "src" / "lib" / "sample-run.json"
 
 # Suffix lets us record a fresh run without mutating the cases the docs cite.

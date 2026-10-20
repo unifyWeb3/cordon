@@ -15,6 +15,10 @@ dependencies = [
 [dependency-groups]
 dev = [
     "pytest",
+    # In-process EVM so the Solidity target is executed, not merely read. Pinned to the
+    # newest release whose metadata accepts the eth-utils==5.0.0 / eth-account==0.13.3
+    # pins above; 0.14.0b1 requires eth-utils>=6 and would force those pins up.
+    "eth-tester[py-evm]==0.13.0b1",
 ]
 
 [tool.pytest.ini_options]

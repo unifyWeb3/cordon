@@ -61,11 +61,11 @@ it is tier-2 judgement for ambiguous cases. Pair it with one.
 adjudication recorded against the deployed contract on GenLayer Studionet (chain 61999), and every
 case has a shareable link at `/case/<caseId>`.
 
-**Run the tests.** The contract is hermetic — 38 tests, no network:
+**Run the tests.** The contract is hermetic — 206 tests, no network:
 
 ```bash
-python -m venv .venv && .venv/bin/pip install -r requirements.txt
-.venv/bin/python -m pytest tests/direct -q
+uv sync
+uv run pytest tests/direct -q
 ```
 
 **Point it at your own protocol.** The integration path is documented in
@@ -87,11 +87,20 @@ hash, and a claim. The contract reads that transaction itself.
 
 Stated plainly, because a demo that overclaims is worse than one that does not:
 
-1. **The contract cannot itself emit the freeze transaction.** `gl.evm.contract_interface(...).emit()`
+1. **The contract cannot itself deliver the freeze transaction.** `gl.evm.contract_interface(...).emit()`
    does not deliver — verified first under GLSim, then against a probe contract on Studionet, where
-   it silently no-ops. The last hop is an off-chain watcher (`deploy/freeze_watcher.py`) that reads
-   the armed state and sends the transaction. The watcher needs a key that can freeze, which is the
-   exact trust property this project set out to remove. It narrows the problem; it does not solve it.
+   it silently no-ops. The `emit` calls have since been **removed** from the contract, so there is no
+   longer a call that reports a success it did not achieve. The last hop is off-chain and split in
+   two: `deploy/attest.py` signs a statement naming the case, the pool and the deadline, and
+   `deploy/freeze_watcher.py` carries it and pays the gas. The **attester** key is the one that can
+   freeze, and with one attester configured that is still a single key — bounded by the pool's
+   maximum window, but single. The **relay** key cannot freeze at all: it can neither choose the
+   pool, the verdict nor the deadline, because any edit breaks the signature. As the pool's `owner`
+   it can clear a live deadline early and can never create or extend one — the two write sites are
+   enumerated in `tests/direct/test_haltable_pool.py`, and a deployment that does not want the gas
+   payer to hold even that can give `owner` a different address. So the honest summary
+   is that an unaccountable pause key has been replaced by an attributable, window-bounded
+   signature; the trust property the project set out to remove is narrowed, not eliminated.
    Full write-up in the README under *Tested, and found broken*.
 
 2. **Every live case so far is `FALSE_REPORT` or `INSUFFICIENT_EVIDENCE`.** That is the correct
@@ -109,8 +118,11 @@ Stated plainly, because a demo that overclaims is worse than one that does not:
    `INSUFFICIENT_EVIDENCE` on a byte-identical digest. It settled toward the conservative verdict.
    Both times, nothing was frozen.
 
-5. **A `genlayer-py` read defect is open and unfixed.** `genlayer-py` 0.18.0 reports
-   `Contract 0x37E08A26… not found` for a contract that `genlayer-js` 1.1.8 reads successfully at
+5. **A `genlayer-py` read failure was observed against the previous deployment and does not
+   reproduce against the current one.** `genlayer-py` 0.18.0 reported
+   `Contract 0x37E08A26… not found` for a contract that `genlayer-js` 1.1.8 read successfully at
    the same endpoint on the same chain. Reproduced twice; endpoint, chain, address and existence
-   all ruled out. This weakens the watcher's documented read path. The frontend claim is unaffected
-   and was re-verified in production.
+   all ruled out. On 2026-10-17, after the redeployment, the same SDK version read
+   `0x95be4d88…` — schema, `stats()` — with no error, so whatever it was, it was specific to that
+   contract rather than to the endpoint. The relay does not depend on it either way: it reads
+   keyless, which it has to do regardless because the SDK's read path requires a private key.

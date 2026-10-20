@@ -11,6 +11,11 @@ from pathlib import Path
 import pytest
 from gltest.direct import pytest_plugin  # noqa: F401  (registers direct_* fixtures)
 
+# `deploy/` holds the key-free attestation encoder that the attester, the relay and these
+# tests all share. It is on the path so the Python digest can be asserted byte-identical to
+# the Solidity one (`tests/direct/test_attestation_digest.py`).
+ROOT = Path(__file__).resolve().parent.parent.parent
+sys.path.insert(0, str(ROOT / "deploy"))
 sys.path.insert(0, str(Path(__file__).parent))
 from fixtures import FIXTURES, submit_payload  # noqa: E402
 
@@ -18,12 +23,10 @@ CONTRACT = "contracts/emergency_halt.py"
 
 # Pin the GenVM SDK version explicitly.
 #
-# Without this, gltest picks the lexicographically newest tarball in its cache. Running
-# `genvm-lint check` drops symlinks named after the *linter's* bundle versions into that same
-# cache directory, so the "newest" entry silently becomes a bundle with a different internal
-# layout and every test fails with "No py-genlayer runners found in tarball". Pinning makes the
-# suite independent of whatever else is lying around in ~/.cache.
-SDK_VERSION = "v0.3.0-rc7"
+# v0.2.16 is the last release that publishes genvm-universal.tar.xz; upstream renamed that asset
+# to genvm-runners-all.tar.xz at v0.3.0-rc0, and genlayer-test 0.28.0 hardcodes the old name, so
+# any v0.3.0-rc* pin 404s on download.
+SDK_VERSION = "v0.2.16"
 OWNER = "0x" + "aa" * 20
 SUBMITTER = "0x" + "bb" * 20
 TARGET = "0x" + "22" * 20
@@ -123,14 +126,20 @@ def advance_time(vm, iso: str) -> None:
 	_gl.message_raw["datetime"] = iso
 
 
-def submit(contract, vm, case_name: str, case_id: str | None = None):
-    """Submit one fixture as an arbitrary (non-owner) sender."""
+def submit(contract, vm, case_name: str, case_id: str | None = None,
+           target: str | None = None):
+    """Submit one fixture as an arbitrary (non-owner) sender.
+
+    `target` overrides the address the submitter *claims* the transaction was against,
+    leaving the fixture's own `to` untouched. That is how the target-mismatch case is built.
+    """
     fixture = FIXTURES[case_name]
     vm.sender = SUBMITTER
     payload = submit_payload(
         case_id or case_name,
         fixture,
         URL_FOR[case_name],
+        target=target,
     )
     return contract.submit_proof(payload)
 
@@ -151,3 +160,34 @@ def contract_module(direct_deploy):
 		sdk_version=SDK_VERSION,
 	)
 	return sys.modules["_contract_emergency_halt"]
+
+
+def pytest_sessionfinish(session, exitstatus):
+	"""Refuse to let a run read as green when the EVM tests skipped.
+
+	`test_haltable_pool.py` and `test_attestation_digest.py` compile and *execute*
+	`HaltablePool.sol` on a real EVM. They are the only thing standing behind the claim that
+	the freeze path works at all. Without solc they skip, and the summary reads
+	"N passed, 38 skipped" -- which reads as a pass while the contract's entire
+	authentication path went unverified.
+
+	This repository exists because of calls that report success while doing nothing, so the
+	default here is to fail. If node genuinely cannot be installed on the machine, set
+	`CORDON_ALLOW_SKIP_NO_SOLC=1`; the skip is then accepted, on the record.
+	"""
+	import os
+
+	harness = sys.modules.get("evm_harness")
+	if harness is None or not getattr(harness, "SOLC_SKIPPED", None):
+		return
+	if os.environ.get("CORDON_ALLOW_SKIP_NO_SOLC"):
+		print("\nEVM TESTS SKIPPED, accepted via CORDON_ALLOW_SKIP_NO_SOLC=1: "
+		      f"{harness.SOLC_SKIPPED}")
+		return
+	print(
+		"\nFAILING THIS SESSION: the EVM tests skipped, so the freeze path is UNVERIFIED "
+		"and this run must not be reported as green.\n"
+		f"  {harness.SOLC_SKIPPED}\n"
+		"  Set CORDON_ALLOW_SKIP_NO_SOLC=1 to accept the skip and exit 0."
+	)
+	session.exitstatus = pytest.ExitCode.TESTS_FAILED

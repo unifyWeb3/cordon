@@ -110,11 +110,18 @@ export const emit = {
 	doesNot:
 		"Delivering the freeze to your contract is off-chain. `emit()` was tested against a live " +
 		"target and does not deliver: every signal the contract can produce says success while " +
-		"the target chain receives nothing.",
+		"the target chain receives nothing. The contract no longer even attempts the call, so " +
+		"there is nothing left that can report a delivery that did not happen.",
 	trade:
-		"So the watcher needs a key that can freeze. What changes is that the key can no longer " +
-		"freeze unbounded and unaccountably — the window comes from an adjudicated verdict, it is " +
-		"on the public record, and the target lapses it itself.",
+		"So the last hop is off-chain, and it is split in two. An attester signs a statement " +
+		"naming the case, the pool and the deadline; a relay carries it and pays the gas. The " +
+		"relay holds no key that can freeze — it cannot change the pool, the verdict or the " +
+		"deadline, because any edit breaks the signature. The one thing it can do, as the pool's " +
+		"owner, is end a freeze early; it can never start one. With one attester configured this " +
+		"is still a single key, and it can freeze wrongly for up to the maximum window. What " +
+		"changes is that it can no longer do so unattributably: a wrong freeze is now a signed, " +
+		"public, appealable statement by a known address rather than an anonymous pause — and " +
+		"the target lapses it by itself.",
 } as const;
 
 export const limits = [

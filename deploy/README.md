@@ -15,7 +15,13 @@ current SDK, hence the second environment.
 
     # tests (pinned harness)
     uv run pytest tests/direct/ -v
+
+    # lint + SDK validation
     uv run genvm-lint check contracts/emergency_halt.py
+
+    # if validation reports "Failed to load SDK: HTTP Error 404", point the tool at
+    # the SDK gltest has already extracted (see state/MEMORY.md for why)
+    GENVMROOT=/tmp/opencode/genvmroot uv run genvm-lint check contracts/emergency_halt.py
 
     # deploy
     .venv-deploy/bin/python deploy/deploy_studio_dev.py --check
@@ -24,6 +30,24 @@ current SDK, hence the second environment.
     # submit a proof and watch the lifecycle
     .venv-deploy/bin/python deploy/submit_proof.py \
         --address 0x... --tx 0x... --claim "..." --case-id my-case --network studionet
+
+## Freezing the target (two programs, deliberately split)
+
+    # 1. the attester signs -- the ONLY program holding an attester key
+    python deploy/attest.py --case my-case --out /tmp/opencode/attestation.json
+
+    # 2. the relay verifies and broadcasts -- holds NO attester key
+    python deploy/freeze_watcher.py --case my-case \
+        --target 0x... --attestation /tmp/opencode/attestation.json --dry-run
+
+`attest.py` refuses to sign a `digest`-mode record, because in that mode the submitter supplies the
+transaction's `to` and the target binding is not chain-enforced. `freeze_watcher.py` re-reads the
+record itself, recomputes the digest, recovers the signer and only then sends. See
+`docs/integration.md` §5.
+
+Environment variable **names** the two programs read (never print or commit their values):
+`CORDON_ATTESTER_PRIVATE_KEY`, `CORDON_ATTESTER_ADDRESS`, `BASE_SEPOLIA_RPC_URL`,
+`BASE_SEPOLIA_PRIVATE_KEY`.
 
 ## Networks
 

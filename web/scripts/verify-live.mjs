@@ -7,11 +7,12 @@
  * it expected. Exists so a reviewer can confirm the path works end to end without installing
  * anything, and so the expected output in the README is reproducible rather than remembered.
  *
- * Uses `genlayer-js`, deliberately. `genlayer-py` 0.18.0 reports this same contract as
- * "not found" at this same endpoint on this same chain (reproduced twice; endpoint, chain id,
- * address and existence all ruled out), so the Python client cannot be used to verify the
- * deployment. See state/reviews/2026-10-03-vercel-deploy/DEPLOY-VERIFICATION.md.
+ * Uses `genlayer-js` deliberately: it is the client the web app itself uses, so this verifier
+ * exercises the same read path the page does. (`genlayer-py` 0.18.0 reported the PREVIOUS
+ * deployment as "not found" at the same endpoint and chain -- reproduced twice -- and reads this
+ * one without error. See state/MEMORY.md, Stage 4.)
  *
+ * The default case id is a case that exists on the CURRENT deployment; pass another to check it.
  * Exit code 0 = every expectation met. 1 = at least one mismatch.
  */
 
@@ -71,7 +72,7 @@ function check(label, actual, expected, ok) {
   if (!pass) console.log(`         expected: ${expected}`);
 }
 
-const target = process.argv[2] ?? "live-drain-run2";
+const target = process.argv[2] ?? "live-drain-run3";
 
 console.log("Cordon — live deployment verification");
 console.log("=====================================");

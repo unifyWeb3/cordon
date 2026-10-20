@@ -41,6 +41,10 @@ BENIGN_RECEIPT = {
 }
 BENIGN_TX = {"value": "0x37a", "input": "0x2e1a7d4d", "from": "0x" + "cc" * 20, "to": "0x" + "dd" * 20}
 
+# The pool both fixture transactions actually called. `submit_proof` must name this exact
+# address or the contract downgrades the verdict -- see test_target_binding.py.
+POOL = EXPLOIT_TX["to"]
+
 
 def batch(receipt, tx):
     return json.dumps([{"jsonrpc": "2.0", "id": 1, "result": receipt},
@@ -111,7 +115,7 @@ def test_contract_fetches_a_public_rpc_and_confirms(direct_vm, direct_deploy):
     direct_vm.sender = SUBMITTER
     halt.submit_proof(json.dumps({
         "case_id": "rpc-1",
-        "target": "0x" + "22" * 20,
+        "target": POOL,
         "tx_hash": "0x" + "ab" * 32,
         "claim": "drain",
     }))
@@ -121,6 +125,7 @@ def test_contract_fetches_a_public_rpc_and_confirms(direct_vm, direct_deploy):
     assert p.evidence_mode == "jsonrpc"
     assert p.evidence.value_band == "MEDIUM"
     assert p.evidence.input_selector == "0x23b872dd"
+    assert p.evidence.tx_to == POOL, "the fetched transaction's `to` is recorded"
     assert p.frozen is True
     assert direct_vm.run_validator() is True
 

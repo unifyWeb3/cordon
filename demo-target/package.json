@@ -1,0 +1,12 @@
+{
+  "name": "cordon-demo-target",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Build tooling for HaltablePool.sol. solc-js (WASM) is used deliberately: the upstream solc-static-linux binary is amd64-only and this project is developed and tested on linux/aarch64, where it cannot run at all.",
+  "scripts": {
+    "build": "solcjs --bin --abi --optimize -o out src/HaltablePool.sol"
+  },
+  "devDependencies": {
+    "solc": "0.8.24"
+  }
+}

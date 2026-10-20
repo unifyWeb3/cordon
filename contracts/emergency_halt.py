@@ -35,7 +35,7 @@ from dataclasses import dataclass
 from datetime import datetime, timedelta, timezone
 from typing import Optional
 
-from genlayer import gl, allow_storage, TreeMap, DynArray, Address, u256
+from genlayer import gl, allow_storage, TreeMap, DynArray, u256
 
 # --------------------------------------------------------------------------------------
 # Verdict enum. Constrained output is the main defence against prompt injection (R4):
@@ -77,6 +77,7 @@ class Evidence:
 	receipt_ok: bool
 	success: bool
 	receipt_status: str
+	tx_to: str
 	input_selector: str
 	selectors: str
 	repeated_selectors: str
@@ -92,6 +93,7 @@ class Evidence:
 			receipt_ok=bool(digest.get("receipt_ok", False)),
 			success=bool(digest.get("success", False)),
 			receipt_status=str(digest.get("receipt_status", "MISSING")),
+			tx_to=str(digest.get("tx_to", "")).lower(),
 			input_selector=str(digest.get("input_selector", "NONE")),
 			selectors=",".join(str(s) for s in digest.get("selectors") or []),
 			repeated_selectors=",".join(str(s) for s in digest.get("repeated_selectors") or []),
@@ -133,18 +135,34 @@ class Proof:
 
 
 class Target:
-	"""EVM interface of the target protocol. Note the positional-only `/` -- required by
-	the SDK's code generator, and missing from the published docs example."""
+	"""REFERENCE DECLARATION of the target protocol's EVM ABI. Nothing here is invoked.
+
+	Kept in-repo so the interface the pool exposes is visible next to the contract that
+	adjudicates it, and so a change to `HaltablePool.sol` has an obvious place to land here.
+
+	There is no `freeze(reason, until)`, and that is the point. The only freeze entry point
+	is `freeze_from_attestation`, which requires an off-chain signature over a finalized
+	CONFIRMED_EXPLOIT naming that exact pool. The GenLayer contract holds no signing key and
+	so has no freeze path of its own -- see the "delivery (off-chain)" note in `_record`.
+
+	Note the positional-only `/`: required by the SDK's code generator, and missing from the
+	published docs example.
+	"""
 
 	class View:
 		def is_frozen(self, /) -> bool: ...
 
 	class Write:
-		def freeze(self, reason: str, until: u256, /) -> None: ...
+		def freeze_from_attestation(
+			self,
+			case_id: bytes,
+			verdict_hash: bytes,
+			finalized: bool,
+			expires_at: u256,
+			signature: bytes,
+			/,
+		) -> None: ...
 		def unfreeze(self, reason: str, /) -> None: ...
-
-
-target_intf = gl.evm.contract_interface(Target)
 
 
 # --------------------------------------------------------------------------------------
@@ -185,9 +203,29 @@ def _iso_shift(iso: str, seconds: int) -> str:
 	return base.astimezone(timezone.utc).isoformat().replace("+00:00", "Z")
 
 
+def _iso_key(iso: str) -> str:
+	"""UTC, second-resolution form of an ISO-8601 stamp, for comparison rather than display.
+
+	`expires_at` is always `_iso_shift` output and already ends in `Z`, so for it this is the
+	identity and the comparison below stays a plain string comparison. A *node-provided* stamp
+	may carry an offset instead, and `...10:00:00+02:00` does not sort against `...07:30:00Z`
+	the way the two instants do -- so once `_strip_us` keeps a zone (it must: dropping it is
+	what silently moved the instant), the offset has to be folded in before anything is ordered,
+	or a freeze ends at the wrong moment.
+
+	Unparseable input raises here. Comparing unparseable stamps as text, which is what the
+	previous version did, is a coin flip rather than a deadline, and the flip decides whether
+	the pool is paused.
+	"""
+	stripped = _strip_us(iso)
+	if stripped.endswith("Z"):
+		return stripped
+	return _iso_shift(stripped, 0)
+
+
 def _iso_le(a: str, b: str) -> bool:
-	"""ISO-8601 UTC strings sort lexicographically once microseconds are stripped."""
-	return _strip_us(a) <= _strip_us(b)
+	"""ISO-8601 stamps, ordered by the instant they name rather than by their text."""
+	return _iso_key(a) <= _iso_key(b)
 
 
 def _window_closed(expires_at: str) -> bool:
@@ -202,12 +240,26 @@ def _window_closed(expires_at: str) -> bool:
 
 
 def _strip_us(iso: str) -> str:
-	"""Drop sub-second precision and normalise to a trailing Z.
+	"""Drop sub-second precision, keeping whatever zone follows it.
 
 	Idempotent on purpose: this is applied to values that have already been through it, and an
 	implementation that unconditionally appended "Z" would turn `...:48Z` into `...:48ZZ`.
+
+	The zone is NOT part of the fraction. `iso.split(".", 1)[0]` dropped both at once, so
+	`2026-10-17T09:00:00.123+02:00` lost its offset, gained a `Z`, and named an instant two
+	hours away from the one it spells -- a wrong deadline, silently, in a contract whose whole
+	job is deadlines. Only the run of digits directly after the dot is sub-second precision;
+	anything after those digits is the zone and survives verbatim.
+
+	The result is therefore not always `...Z`. Anything that *orders* these strings must go
+	through `_iso_key`; parsing them is fine either way.
 	"""
-	head = iso.split(".", 1)[0]
+	head, dot, tail = iso.partition(".")
+	if dot:
+		digits = 0
+		while digits < len(tail) and tail[digits].isdigit():
+			digits += 1
+		head += tail[digits:]
 	if head.endswith("Z") or "+" in head:
 		return head
 	return head + "Z"
@@ -291,6 +343,7 @@ def derive_digest(payload: dict) -> dict:
 		"tx_found": bool(payload.get("tx_found", False)),
 		"receipt_ok": bool(receipt.get("status") in (1, "0x1", True)),
 		"success": bool(receipt.get("status") in (1, "0x1", True)),
+		"tx_to": str(payload.get("to", "")).lower(),
 		"selectors": sorted(set(selectors)),
 		"repeated_selectors": repeated,
 		"value_band": _band_int(receipt.get("value"), _VALUE_BANDS),
@@ -319,6 +372,7 @@ def derive_digest_from_rpc(receipt: object, tx: object) -> dict:
 		"receipt_status": "NOT_FOUND",
 		"value_band": "UNKNOWN",
 		"log_band": "UNKNOWN",
+		"tx_to": "",
 		"input_selector": "NONE",
 		"selectors": [],
 		"repeated_selectors": [],
@@ -357,6 +411,7 @@ def derive_digest_from_rpc(receipt: object, tx: object) -> dict:
 		"receipt_status": status_hex,
 		"value_band": _band_int(tx.get("value"), _VALUE_BANDS),
 		"log_band": _band_int(len(logs), _LOG_BANDS),
+		"tx_to": str(tx.get("to", "") or "").lower(),
 		"input_selector": raw_input[:10] if len(raw_input) >= 10 else "NONE",
 		"selectors": sorted(set(topics)),
 		"repeated_selectors": repeated,
@@ -405,6 +460,7 @@ def digest_from_response(status: int, body: bytes | None) -> dict:
 		"receipt_status": f"HTTP_{status}",
 		"value_band": "UNKNOWN",
 		"log_band": "UNKNOWN",
+		"tx_to": "",
 		"selectors": [],
 		"repeated_selectors": [],
 	}
@@ -429,6 +485,7 @@ def digest_signature(digest: dict) -> str:
 		"ok=1" if digest.get("receipt_ok") else "ok=0",
 		f"value={digest.get('value_band')}",
 		f"logs={digest.get('log_band')}",
+		f"to={digest.get('tx_to', '')}",
 		"rep=" + ",".join(sorted(str(s) for s in digest.get("repeated_selectors") or [])),
 	]
 	return "|".join(parts)[:500]
@@ -447,6 +504,7 @@ def build_prompt(claim: str, digest: dict) -> str:
 		f"- executed_successfully: {digest.get('success')}",
 		f"- value_magnitude_band: {digest.get('value_band')}",
 		f"- log_count_band: {digest.get('log_band')}",
+		f"- transaction_to_address: {digest.get('tx_to') or 'NONE'}",
 		f"- function_selectors_seen: {', '.join(str(s) for s in digest.get('selectors') or []) or 'none'}",
 		f"- function_selector_called: {digest.get('input_selector', 'NONE')}",
 		f"- event_signatures_seen: {', '.join(str(s) for s in digest.get('selectors') or []) or 'none'}",
@@ -704,6 +762,19 @@ class EmergencyHalt(gl.Contract):
 		digest = digest if isinstance(digest, dict) else {}
 		evidence = Evidence.from_digest(evidence_url, digest)
 
+		# Target binding. `target` is what the submitter *claimed*; `tx_to` is the address the
+		# fetched transaction actually touched. A CONFIRMED_EXPLOIT verdict on a transaction
+		# that never called the named pool is not evidence about that pool, so it is downgraded
+		# to INSUFFICIENT_EVIDENCE rather than armed. A mismatch is a verdict input, not an
+		# error, so it does not raise.
+		#
+		# Limitation worth stating: in `digest` mode the submitter supplies `to` along with every
+		# other digest field, so this check is only chain-enforced in `jsonrpc` mode. That is
+		# why `deploy/attest.py` refuses to sign any digest-mode record.
+		target_norm = target.strip().lower()
+		if verdict == CONFIRMED_EXPLOIT and evidence.tx_to != target_norm:
+			verdict = INSUFFICIENT_EVIDENCE
+
 		frozen = verdict == CONFIRMED_EXPLOIT
 		expires_at = _iso_shift(now, int(self.default_freeze_seconds)) if frozen else ""
 		if frozen:
@@ -733,32 +804,23 @@ class EmergencyHalt(gl.Contract):
 		self.case_ids.append(case_id)
 		self.submit_count = u256(int(self.submit_count) + 1)
 
-		if frozen:
-			self._emit_freeze(target, tx_hash, expires_at)
+	# ---------------------------------------------------------------- delivery (off-chain)
 
-	def _emit_freeze(self, target: str, tx_hash: str, expires_at: str) -> None:
-		"""Emit the freeze to the EVM target.
-
-		Placed OUTSIDE the nondet block on purpose: EVM messages are only emitted on
-		finality, and cross-contract/EVM ops are forbidden inside a nondet block.
-
-		Honest limitation: on local GLSim this call is a verified no-op (it returns without
-		error because the harness does not implement EthSend). It is only meaningful on a
-		real GenVM executor. See state/reviews/.../M0B-R1-EVM-EMIT.md.
-		"""
-		try:
-			until = u256(_epoch(expires_at))
-		except BaseException:  # noqa: BLE001
-			until = u256(0)
-		try:
-			target_intf(Address(target)).emit().freeze(
-				f"genlayer:exploit-confirmed:{tx_hash[:16]}", until
-			)
-			gl.trace("FREEZE_EMITTED", target)
-		except BaseException as e:  # noqa: BLE001
-			# Never let the EVM path break the consensus result. The verdict is the
-			# product; the emit is an integration detail and R1 says it may be absent.
-			gl.trace("FREEZE_EMIT_FAILED", f"{type(e).__name__}")
+	# There is deliberately NO `_emit_freeze` here.
+	#
+	# `HaltablePool` accepts a freeze only from `freezeFromAttestation`, which requires a
+	# signature over a finalized CONFIRMED_EXPLOIT naming that exact pool. An Intelligent
+	# Contract has no signing key, so it cannot produce one. Emitting the call anyway would
+	# be worse than useless: `gl.evm.contract_interface(...).emit()` is a verified no-op on
+	# this stack (it returns without raising and delivers nothing -- see AGENTS.md), so the
+	# transaction would report success and the pool would stay open.
+	#
+	# Delivery is therefore entirely off-chain and explicit:
+	#     deploy/attest.py          reads the record, refuses anything unattestable, signs
+	#     deploy/freeze_watcher.py  re-checks the record, verifies the signature, broadcasts
+	#
+	# The record above is the product. It is public, final and self-expiring; anyone may act
+	# on it, and no privileged GenLayer access is needed to read it.
 
 	# ---------------------------------------------------------------- expiry (M2)
 
@@ -778,13 +840,11 @@ class EmergencyHalt(gl.Contract):
 
 		proof.frozen = False
 		proof.unfrozen_at = _iso_now()
-		try:
-			target_intf(Address(proof.target)).emit().unfreeze(
-				f"auto-expiry:{case_id}"
-			)
-			gl.trace("UNFREEZE_EMITTED", proof.target)
-		except BaseException as e:  # noqa: BLE001
-			gl.trace("UNFREEZE_EMIT_FAILED", f"{type(e).__name__}")
+		# No EVM emit here either, and for the same reason as `_record`: clearing a freeze
+		# needs no signature, but an `unfreeze` the contract cannot deliver would read as a
+		# successful lift while the pool stayed frozen. `isFrozen()` on the target is a pure
+		# read of `frozenUntil`, so the window lifts on the EVM side on its own; this call
+		# only mirrors that in GenLayer storage.
 		return True
 
 	@gl.public.view
