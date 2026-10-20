@@ -117,7 +117,7 @@ compile outside its immutables). `cd web && node scripts/verify-live.mjs` prints
 actual, exit 0 on pass.
 
 The previous pool `0x9e6c83C8…` is still on chain but its owner key is dead and its attester is not
-one we hold, so it cannot be frozen by anyone. It is history, not a live target.
+one we hold, so nothing we hold can freeze it. It is history, not a live target.
 
 Current deployment (2026-10-20 — every hash is in
 [`docs/live-run-2026-10-20.md`](docs/live-run-2026-10-20.md)):

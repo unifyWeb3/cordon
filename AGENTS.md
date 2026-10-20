@@ -18,7 +18,7 @@ think to look.
 | This run’s transcript | `docs/live-run-2026-10-20.md` — every hash, and the negative result in full |
 
 The previous pool `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` is still on chain but its owner key is
-dead and its attester is not one we hold, so **it cannot be frozen by anyone**. Ignore it except as
+dead and its attester is not one we hold, so **nothing we hold can freeze it**. Ignore it except as
 history.
 
 **`cordon.vercel.app` is a different project** ("Condor Gaming", another account). Vercel subdomains
