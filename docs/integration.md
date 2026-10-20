@@ -395,10 +395,13 @@ carries a self-expiring, consensus-gated freeze. The live projects we found do n
   (and with one attester configured, that is still a single key — bounded by `MAX_WINDOW`, and
   attributable because the signature names case, pool and deadline). The **relay** holds no such
   key and can only choose when, and who pays the gas (README, docs section 5).
-- No `CONFIRMED_EXPLOIT` has been produced against a live public transaction, and none was
-  manufactured for the demo: real public drains adjudicate to `FALSE_REPORT` or
-  `INSUFFICIENT_EVIDENCE`. The attestation-to-freeze path is exercised on an EVM in
-  `tests/direct/test_relay_attestation.py`, not claimed from a live freeze.
+- No `CONFIRMED_EXPLOIT` has been produced against a **live public** protocol, and none was
+  manufactured for the demo: real public transactions adjudicate to `FALSE_REPORT` or
+  `INSUFFICIENT_EVIDENCE`. One live freeze **has** been produced, on our own deliberately vulnerable
+  testnet target (`VulnerableDemoPool`, `0x4d7b…1eFaed`) on 2026-10-20: consensus
+  `CONFIRMED_EXPLOIT` → signed attestation → relay tx `0xe78a9cb0…9ffb1`, with `frozenUntil` equal
+  to the signed deadline at a pinned block (`docs/live-run-2026-10-20-confirmed.md`). The in-process
+  proof in `tests/direct/test_relay_attestation.py` remains the hermetic one.
 - The default evidence digest is shallow; extend it for your protocol.
 - We ran against Studionet, not studio-dev, because studio-dev could not execute contracts
   when we tested (deploy/README.md).

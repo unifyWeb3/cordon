@@ -30,7 +30,7 @@ import { refetchPolicy } from "@/lib/chain";
 // (`sample-run.json`) is a dated transcript of earlier adjudications and keeps its own case ids;
 // after the 2026-10-17 redeployment those no longer exist on chain, which is why the two sets of
 // ids differ here.
-const DEFAULT_CASE = "live-drain-run3";
+const DEFAULT_CASE = "staged-exploit-vulnpool";
 
 type Tracked = {
   caseId: string;

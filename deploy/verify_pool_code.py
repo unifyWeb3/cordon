@@ -142,13 +142,19 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(description=__doc__.splitlines()[0])
     parser.add_argument("--address", required=True)
     parser.add_argument("--rpc", default=DEFAULT_RPC)
+    parser.add_argument(
+        "--source",
+        default=str(POOL_SOURCE),
+        help="Solidity source to prove against (default: demo-target/src/HaltablePool.sol)",
+    )
     parser.add_argument("--attester-count", type=int, default=1)
     parser.add_argument("--max-window", type=int, default=3600)
     args = parser.parse_args(argv)
 
     pool = to_checksum_address(args.address)
+    source = Path(args.source).resolve()
     solc = find_solc()
-    creation, compiled, ranges = compile_with_deploy_method(solc, POOL_SOURCE)
+    creation, compiled, ranges = compile_with_deploy_method(solc, source)
 
     live_hex = rpc(args.rpc, "eth_getCode", [pool, "latest"])
     if live_hex in ("0x", ""):

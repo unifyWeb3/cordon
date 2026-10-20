@@ -13,9 +13,10 @@ think to look.
 | Contract | `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` on Studionet, chain 61999 |
 | Contract explorer | `https://explorer-studio.genlayer.com/address/0x95be4d88…201` |
 | Target protocol | `0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E` on Base Sepolia (deployed 2026-10-20, attester key held) |
+| Staged exploit target | `0x4d7b0793476Ce614539feC663fccD4ab6f1eFaed` on Base Sepolia — `VulnerableDemoPool`, **intentionally vulnerable**, frozen live 2026-10-20 |
 | App | `https://cordon-oxunify.vercel.app` |
-| Headline case | `/case/live-drain-run2` → `INSUFFICIENT_EVIDENCE` |
-| This run’s transcript | `docs/live-run-2026-10-20.md` — every hash, and the negative result in full |
+| Headline case | `/case/staged-exploit-vulnpool` → `CONFIRMED_EXPLOIT` (staged, our own vulnerable testnet pool) |
+| This run’s transcripts | `docs/live-run-2026-10-20.md` (the negative result on `HaltablePool`) and `docs/live-run-2026-10-20-confirmed.md` (the confirmed→freeze lifecycle on `VulnerableDemoPool`) |
 
 The previous pool `0x9e6c83C8ea2b6d15aBe38105484FDCD6BA91300e` is still on chain but its owner key is
 dead and its attester is not one we hold, so **nothing we hold can freeze it**. Ignore it except as
@@ -52,17 +53,24 @@ built output for `does not deliver` / `off-chain watcher` before publishing.
 
 Also standing:
 
-- Every live case is `FALSE_REPORT` or `INSUFFICIENT_EVIDENCE`. There is **no** live
-  `CONFIRMED_EXPLOIT`, because that is the correct verdict for random public transactions. Do not
-  manufacture one.
+- There is exactly **one** live `CONFIRMED_EXPLOIT`, and it is not evidence about a public protocol:
+  `staged-exploit-vulnpool`, a real zero-credit drain of our own **intentionally vulnerable**
+  `VulnerableDemoPool` on Base Sepolia, labelled staged. It confirmed because its receipt carried the
+  measurable drain shape (`value=SMALL logs=MANY rep=0x7084f547…`) on a transaction sent to the
+  target. All cases against the non-vulnerable `HaltablePool` and random public transactions are
+  `FALSE_REPORT` / `INSUFFICIENT_EVIDENCE`. Do not generalise the confirmed case to a public target,
+  and do not manufacture another.
 - **The evidence digest cannot see an ETH outflow.** It carries the transaction's own `msg.value`,
   a log count and selectors — no balance and no transferred amount. A real, complete drain of the
   ETH demo pool was adjudicated live on 2026-10-20 (`staged-drain-plain`) as `FALSE_REPORT`, with
-  `value=ZERO logs=FEW rep=`. Never describe the evidence as showing funds leaving.
-- **A truthfully labelled staged test cannot be `CONFIRMED_EXPLOIT`**, and the same live case shows
-  why: `CONFIRMED_EXPLOIT` means unauthorised. Labelling a test honestly and getting that verdict
-  are mutually exclusive; `docs/live-run-2026-10-20.md` §5 has the full argument and the two
-  observed controls.
+  `value=ZERO logs=FEW rep=`. Never describe the digest as showing funds leaving; the vulnerable
+  pool's drain is visible only as receipt *shape* (`SMALL`/`MANY`/repeated topic), not as an amount.
+- The old claim that **a truthfully labelled staged test cannot be `CONFIRMED_EXPLOIT`** was wrong as
+  a universal statement, and the live record says so. The `staged-exploit-vulnpool` rationale reads
+  "Even though the claim labels this a 'staged test,' the on-chain behavior (MANY logs, repeated
+  identical event, successful execution draining funds…" and confirms on the receipt. The earlier
+  `FALSE_REPORT` was driven by `value=ZERO logs=FEW`, not by the label alone. Both transcripts are
+  dated 2026-10-20; keep the distinction between the target and the receipt.
 - No claim of beating Kelp's 46-minute response. Consensus takes ~1 minute and is tier-2 judgement
   for ambiguous cases, not a deterministic tripwire.
 - Runtime evidence must be **emitted by the page**, not asserted in prose.
@@ -71,7 +79,7 @@ Also standing:
 ## Checks
 
 ```bash
-# contract logic — hermetic, no network, 38 tests, ~6 s
+# contract logic — hermetic, no network, 215 tests, ~85 s
 .venv/bin/python -m pytest tests/direct -q
 
 # live deployment, prints expected vs actual, exit 0 on pass

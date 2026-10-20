@@ -2,6 +2,77 @@
 
 Updated 2026-10-20.
 
+## 2026-10-20 (run 3) — a real exploit, a live `CONFIRMED_EXPLOIT`, and a live attested freeze
+
+Read this first. Transcript with every hash and re-verification commands:
+`docs/live-run-2026-10-20-confirmed.md`. Design: `state/DESIGN-live.md`. The run-2 section below is
+**not deleted**: it remains true for `HaltablePool`, and it is the record of the negative result.
+This run used a different, deliberately vulnerable target.
+
+### Result in one paragraph
+
+A zero-deposit caller drained another depositor's 0.00004 ETH from
+`VulnerableDemoPool` (`0x4d7b0793476Ce614539feC663fccD4ab6f1eFaed`) in one direct transaction, with
+12 payouts and 12 identical events. The IC returned **`CONFIRMED_EXPLOIT`** (`staged-exploit-vulnpool`,
+finalized, `MAJORITY_AGREE`); the attester signed it; the relay broadcast
+`freezeFromAttestation`; and `frozenUntil` read back at the relay block is the signed deadline.
+**The freeze is live until `2026-10-20T09:24:41Z` (epoch `1792488281`).** No unfreeze was sent.
+
+**Next action:** when the user says "check expiry" after that time, read `isFrozen()` **once** at a
+pinned block and record the result. Do not re-freeze, do not extend, do not send `unfreeze`.
+
+### Artifacts
+
+| What | Value |
+|---|---|
+| Vulnerable pool | `0x4d7b0793476Ce614539feC663fccD4ab6f1eFaed`, tx `0xde2e7a52…8e11b1`, block 48,358,078, gas 1,126,924 |
+| Runtime proof | sha256 `e696ac97…b59324`; `DOMAIN_SEPARATOR` `0x5a15bdb8…a25b3f`; attester `0xaA14…3D73`, `MAX_WINDOW=3600` |
+| Victim deposit | tx `0x8376d542…65bb42`, block 48,358,116, 40,000,000,000,000 wei |
+| Exploit | tx `0x5fca99a5…74a0ab`, block 48,358,119, 1 wei in, 12 logs, selector `0x0962ef79`, topic `0x7084f547…` |
+| Pinned state | before: victim credit 4e13, attacker credit 0, pool 4e13; after: victim **still 4e13**, attacker 0, pool **5 wei** |
+| IC case | `staged-exploit-vulnpool`, GenLayer tx `0x15db6c4e…ac26c49`, `CONFIRMED_EXPLOIT`, expires `09:24:41Z` |
+| Attestation | digest `0x7fc09a7f…7d8a49b4`, signer `0xaA14…3D73`, deadline `1792488281` |
+| Relay | tx `0xe78a9cb0…479ffb1`, block 48,358,271, `isFrozen=1`, `frozenUntil=1792488281` == signed |
+| Controls | wrong-pool `0x50ad8418…6b6b75` (`0x0`, unknown attester); replay `0x163d6dad…631319` (`0x1`, idempotent); wrong-target GenLayer `0xdeceeeb0…9c163b` (`INSUFFICIENT_EVIDENCE`) |
+
+### Why it confirmed, in the model's words
+
+The stored rationale is truncated by the IC at 500 chars. It says the receipt shows a reward-claiming
+function firing repeatedly, "consistent with … claimRewards paid out 12 iterations from the pool's
+global balance rather than the caller's credited deposit. **Even though the claim labels this a
+'staged test,' the on-chain behavior (MANY logs, repeated identical event, successful execution
+draining funds…**". So the label was seen and did not decide the verdict; the receipt shape did.
+
+### Corrections to standing claims
+
+* **"A truthfully labelled staged test cannot be `CONFIRMED_EXPLOIT`" is false as a universal
+  statement.** This run is the counter-example, and the model said so in the rationale. The earlier
+  `FALSE_REPORT` (`staged-drain-plain`) was driven by `value=ZERO logs=FEW` plus the label, not by
+  the label alone. `AGENTS.md` was corrected.
+* **The digest still cannot see an amount.** The claim's numbers are true (pinned reads), but the
+  model could not check them; it confirmed the shape. Never write that the evidence shows the money.
+* **The contract-level `tx_to != target` downgrade was not isolated.** In `control-wrong-target-vulnpool`
+  the model itself caught the mismatch first and returned `INSUFFICIENT_EVIDENCE`; `_record` never saw
+  a `CONFIRMED`. The pipeline refused, but this case does not prove which layer refused.
+
+### Landmines that recurred / were found
+
+* **`latest` is still not a fact.** Immediately after the deposit's `status 0x1`, an unpinned read
+  printed `deposits(victim)=0`. Pinned to the deposit block it is `40000000000000`. `staged_exploit.py`
+  now pins every read to the receipt block with a bounded retry. The first JSON record was corrected;
+  the transcript uses the pinned values.
+* **`deploy/negative_control.py replay` read the pre-2026-10 schema** (`caseId`/`expiresAt`) and would
+  `KeyError` on every real attestation file. Fixed to `case_id`/`expires_at_epoch`; the live replay
+  then ran.
+* **`genlayer-py` 0.18.0 is still unreliable for live reads.** Everything here used `genlayer-js`
+  (`web/scripts/verify-live.mjs`) or direct JSON-RPC. Do not "fix" a missing record by switching SDKs.
+
+### Trust that remains
+
+One attester key authorises the freeze; one configured RPC supplies the evidence; the relay pays gas
+and chooses when; the vulnerable contract is ours. This is a lifecycle proof on a testnet, not a
+claim about a public protocol.
+
 ## 2026-10-20 (run 2) — new pool with a live attester; the drain did **not** confirm; freeze not exercised live
 
 Read this before the section below: it supersedes its funding blocker and its "current pool". Full
@@ -11,10 +82,12 @@ hashes and reproduction commands: `docs/live-run-2026-10-20.md`. Dated transcrip
 ### Result in one paragraph
 
 The user funded the Base Sepolia key, so the pool was deployed, drained for real, and adjudicated
-live twice. **No `CONFIRMED_EXPLOIT` was produced, and no freeze was attempted.** That is the
-finding, not an unfinished step: a true, honestly labelled staged drain is `FALSE_REPORT`, and the
-only receipt carrying the drain signature cannot satisfy the target binding. Both were observed.
-Do not "fix" this by signing an attestation for a verdict that does not exist.
+live twice. **No `CONFIRMED_EXPLOIT` was produced on this target, and no freeze was attempted.**
+(Run 3 above later produced one on the deliberately vulnerable `VulnerableDemoPool` and froze it.)
+For `HaltablePool` that is the finding, not an unfinished step: a true, honestly labelled staged
+drain is `FALSE_REPORT`, and the only receipt carrying the drain signature cannot satisfy the target
+binding. Both were observed. Do not "fix" this by signing an attestation for a verdict that does not
+exist.
 
 ### Deployments
 
@@ -65,7 +138,7 @@ is what makes it complete.
   `unknown attester`, signer recovered against the pool's digest `0xD3CA23e4…7C65` ≠ attester,
   `isFrozen/frozenUntil` still 0. Script: `deploy/negative_control.py wrong-pool`.
 
-### Why no honest `CONFIRMED_EXPLOIT` exists here (the load-bearing paragraph)
+### Why no honest `CONFIRMED_EXPLOIT` exists for `HaltablePool` (run 2; superseded for the vulnerable target by run 3)
 
 `attest.py` signs only a finalized `CONFIRMED_EXPLOIT`, and `freezeFromAttestation` requires
 `evidence.tx_to == address(this)`. So a binding-valid case is a transaction **to the pool**; a

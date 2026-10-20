@@ -159,10 +159,12 @@ def main(argv: list[str] | None = None) -> int:
             raise SystemExit("`replay` needs --attestation from deploy/attest.py")
         doc = json.loads(Path(args.attestation).read_text())
         signature = bytes.fromhex(doc["signature"][2:])
-        expires = args.expires_at or int(doc["expiresAt"])
-        result["case"] = doc.get("caseId")
+        # Current attestation schema (deploy/attest.py): case_id / expires_at_epoch. The older
+        # camelCase keys were never written by the attester, so this branch used to KeyError.
+        expires = args.expires_at or int(doc["expires_at_epoch"])
+        result["case"] = doc.get("case_id")
         result["expiresAt"] = expires
-        data = calldata(doc["caseId"], expires, signature)
+        data = calldata(doc["case_id"], expires, signature)
 
     before = read_state(rpc, pool)
     result["state_before"] = before

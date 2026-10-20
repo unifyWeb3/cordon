@@ -72,7 +72,7 @@ function check(label, actual, expected, ok) {
   if (!pass) console.log(`         expected: ${expected}`);
 }
 
-const target = process.argv[2] ?? "live-drain-run3";
+const target = process.argv[2] ?? "staged-exploit-vulnpool";
 
 console.log("Cordon — live deployment verification");
 console.log("=====================================");

@@ -41,6 +41,7 @@ from eth_utils import keccak, to_checksum_address
 ROOT = Path(__file__).resolve().parent.parent.parent
 SOLC_BIN = ROOT / "demo-target" / "node_modules" / ".bin" / "solcjs"
 POOL_SOURCE = ROOT / "demo-target" / "src" / "HaltablePool.sol"
+VULNERABLE_SOURCE = ROOT / "demo-target" / "src" / "VulnerableDemoPool.sol"
 HARNESS_OUT = ROOT / "demo-target" / "out" / "harness"
 
 SKIP_REASON = (
@@ -70,6 +71,17 @@ def find_solc() -> str:
 def compile_pool() -> tuple[list, str]:
     """Compile `HaltablePool.sol` -> (abi, bytecode-hex).
 
+    Thin wrapper over `compile_source`; the long explanation of the artifact rules lives there.
+    """
+    return compile_source(POOL_SOURCE)
+
+
+def compile_source(source: Path) -> tuple[list, str]:
+    """Compile one Solidity source file -> (abi, bytecode-hex).
+
+    The output directory is derived from the source name, so compiling the deliberately
+    vulnerable demo pool cannot overwrite the artifact another test is about to deploy.
+
     Recompiles on every call, into a directory this harness owns and empties first. Both
     halves of that sentence are load-bearing, and both were learned by watching this file
     lie:
@@ -88,24 +100,25 @@ def compile_pool() -> tuple[list, str]:
       * **Compiling unconditionally** means an edited `.sol` can never be tested through a
         stale artifact. It costs a few seconds once per session.
     """
-    if HARNESS_OUT.exists():
-        shutil.rmtree(HARNESS_OUT)
-    HARNESS_OUT.mkdir(parents=True, exist_ok=True)
+    out = HARNESS_OUT if source == POOL_SOURCE else HARNESS_OUT.parent / f"harness-{source.stem}"
+    if out.exists():
+        shutil.rmtree(out)
+    out.mkdir(parents=True, exist_ok=True)
 
     result = subprocess.run(
         [find_solc(), "--bin", "--abi", "--optimize",
-         "-o", str(HARNESS_OUT), str(POOL_SOURCE)],
+         "-o", str(out), str(source)],
         capture_output=True,
         text=True,
         cwd=str(ROOT),
     )
 
-    abi_files = sorted(HARNESS_OUT.glob("*.abi"))
-    bin_files = sorted(HARNESS_OUT.glob("*.bin"))
+    abi_files = sorted(out.glob("*.abi"))
+    bin_files = sorted(out.glob("*.bin"))
     if result.returncode != 0 or len(abi_files) != 1 or len(bin_files) != 1:
-        produced = ", ".join(sorted(p.name for p in HARNESS_OUT.iterdir())) or "nothing"
+        produced = ", ".join(sorted(p.name for p in out.iterdir())) or "nothing"
         raise SolcCompileFailed(
-            f"solc did not produce exactly one artifact for HaltablePool.sol "
+            f"solc did not produce exactly one artifact for {source.name} "
             f"(exit={result.returncode}, abi={len(abi_files)}, bin={len(bin_files)}, "
             f"produced: {produced})\n"
             f"--- stdout ---\n{result.stdout}\n--- stderr ---\n{result.stderr}"

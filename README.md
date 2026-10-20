@@ -111,21 +111,28 @@ times inside one transaction.
 Deployed and verified against Studionet (chain 61999) and Base Sepolia (84532):
 
 **Contract:** `0x95be4d883F89F28CF9cE986e1B400c8CB0808201` (Studionet; source-proven identical to
-`main` on 2026-10-20) · **pool:** `0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E` (Base Sepolia;
-deployed 2026-10-20 with an attester key this project holds, runtime verified against a fresh
-compile outside its immutables). `cd web && node scripts/verify-live.mjs` prints expected vs
-actual, exit 0 on pass.
+`main` on 2026-10-20) · **non-vulnerable pool:** `0xe9797e7102d5B2b35C0DeE0C12257542ddD1359E`
+(Base Sepolia) · **intentionally vulnerable demo pool:** `0x4d7b0793476Ce614539feC663fccD4ab6f1eFaed`
+(Base Sepolia). All runtimes are verified against a fresh compile outside their immutables.
+`cd web && node scripts/verify-live.mjs` prints expected vs actual, exit 0 on pass.
+
+The vulnerable pool is a **deliberately buggy testnet contract** (`VulnerableDemoPool.sol`, header
+says so). It exists for one purpose: to make a real zero-credit drain possible in a single direct
+transaction, so the confirmed→attested-freeze lifecycle can be exercised live. It is not a product
+contract and must never hold value.
 
 The previous pool `0x9e6c83C8…` is still on chain but its owner key is dead and its attester is not
 one we hold, so nothing we hold can freeze it. It is history, not a live target.
 
 Current deployment (2026-10-20 — every hash is in
-[`docs/live-run-2026-10-20.md`](docs/live-run-2026-10-20.md)):
+[`docs/live-run-2026-10-20.md`](docs/live-run-2026-10-20.md) and
+[`docs/live-run-2026-10-20-confirmed.md`](docs/live-run-2026-10-20-confirmed.md)):
 
 | Case | Input | Verdict | Evidence | Result |
 |---|---|---|---|---|
-| `staged-drain-plain` | a real `deposit()` and then one `withdraw(all)` that **emptied the pool** — a true drain of our own testnet pool, labelled as staged | `FALSE_REPORT` | `found=True status=0x1 value=ZERO logs=FEW rep=` | nothing frozen, **and correctly so**: a truthfully labelled staged test is not an unauthorised drain, and `withdraw` sends no ETH itself, so the digest cannot show the outflow |
+| `staged-drain-plain` | a real `deposit()` and then one `withdraw(all)` that **emptied the pool** — a true drain of our own testnet pool, labelled as staged | `FALSE_REPORT` | `found=True status=0x1 value=ZERO logs=FEW rep=` | nothing frozen, **and correctly so for this target**: `withdraw` is not payable and emits one event, so the receipt reads as ordinary activity |
 | `control-wrong-to` | a real tx that emptied the pool through a forwarding harness, submitted with `target` = the pool while `tx_to` = the harness | `INSUFFICIENT_EVIDENCE` | `found=True value=SMALL logs=SOME rep=0xc36b5179…` | nothing frozen; also the run's live proof that `repeated_selectors` populates when a receipt really has repeated events |
+| `staged-exploit-vulnpool` | on the **intentionally vulnerable** pool: a caller with zero deposit ran `claimRewards(12)`; 12 payouts in one transaction emptied another depositor's 0.00004 ETH, labelled staged | **`CONFIRMED_EXPLOIT`** | `found=True status=0x1 value=SMALL logs=MANY rep=0x7084f547…` | **frozen live**: relay tx `0xe78a9cb0…9ffb1`, `frozenUntil` = signed deadline `1792488281` at a pinned block |
 
 The rows below belong to the earlier deployment (2026-10-17, old pool), kept as they were observed
 there:
@@ -174,14 +181,17 @@ signal that the committee is genuinely undecided rather than confidently wrong.
 An earlier draft of this README claimed "no equivocation across live models." That was true of
 six runs and false of the seventh. Corrected rather than quietly dropped.
 
-Read the second and third rows of the table carefully, because they are the honest result. **On
-random public transactions, the correct answer is usually "not an exploit."** The system reached
-`FALSE_REPORT` against a fabricated claim and against a transaction that superficially looked
-like a drain, because the measured evidence did not support it. A pause module that confirmed
-both would be dangerous, and this is the behaviour you want.
+Read the negative rows carefully, because they are the honest result for those targets. **On random
+public transactions, the correct answer is usually "not an exploit."** The system reached
+`FALSE_REPORT` against a fabricated claim and against a transaction that superficially looked like a
+drain, because the measured evidence did not support it. A pause module that confirmed both would be
+dangerous, and this is the behaviour you want.
 
-The `CONFIRMED_EXPLOIT` path is exercised by the hermetic suite instead (§ Tests), where the
-evidence fixture is constructed to carry the drain signature.
+The `staged-exploit-vulnpool` row is different in kind, and its label matters. It is a genuine
+zero-credit drain of our own **deliberately vulnerable** testnet pool, and its receipt carries the
+shape the digest can measure: value on the call, `MANY` logs, one repeated event. It proves the
+lifecycle, not that a public drain would be confirmed — and the IC's arming rules are still exercised
+independently by the hermetic suite (§ Tests).
 
 Full transcript: `state/reviews/2026-10-01-hackathon-discovery/LIVE-RUN.md`.
 
@@ -197,8 +207,9 @@ deploy/attestation.py            key-free EIP-712 encoder: attester, relay and t
 deploy/attest.py                 signs one adjudicated freeze (the only attester key)
 deploy/freeze_watcher.py         verifies and relays a signed freeze (holds no attester key)
 demo-target/src/HaltablePool.sol the EVM target: attestation-only pause, self-lifting expiry
+demo-target/src/VulnerableDemoPool.sol intentionally vulnerable testnet twin: same freeze, one real bug
 docs/integration.md              how another protocol plugs this in
-tests/direct/                    hermetic suite: 206 tests, no network
+tests/direct/                    hermetic suite: 215 tests, no network
 web/                             Next.js 15 frontend (landing narrative + console)
 web/src/lib/content.ts           every user-visible string and number, no JSX literals
 web/src/lib/sample-run.json      a real recorded adjudication, timings included
@@ -227,14 +238,15 @@ while the deploy scripts want a current SDK — see `deploy/README.md`.
 
 ## Tests
 
-`uv run pytest tests/direct/ -v` → **206 passed**. ~50s on an idle machine; budget a few
+`uv run pytest tests/direct/ -v` → **215 passed**. ~85s on an idle machine; budget a few
 minutes if something else is loading the box. The test count is the stable number, not the
 wall clock.
 
-Two of those modules — `test_haltable_pool.py` and `test_relay_attestation.py` — compile the EVM
-target with `solc-js` and execute it on an in-process EVM (`py-evm`), signing real attestations and
-sending real signed transactions. Those skip **loudly** if `solc` is missing rather than passing
-quietly; run `cd demo-target && npm install` first.
+Three of those modules — `test_haltable_pool.py`, `test_vulnerable_demo_pool.py` and
+`test_relay_attestation.py` — compile an EVM target with `solc-js` and execute it on an in-process
+EVM (`py-evm`), signing real attestations and sending real signed transactions. Those skip
+**loudly** if `solc` is missing rather than passing quietly; run `cd demo-target && npm install`
+first.
 
 Hermetic by construction: the web fetch and the model are both mocked from recorded evidence.
 The model stand-in keys off the *observed evidence in the prompt*, so if the contract ever
@@ -325,13 +337,19 @@ transferred amount. `withdraw()` is not payable, so a complete drain of the ETH 
 *"ZERO value magnitude band, indicating no significant ETH transfer ... ordinary, authorized
 protocol activity"*.
 
-The gap is structural, not a tuning problem: a transaction to the pool executes exactly one
-function, the pool emits exactly one event per successful call, and the target binding requires
-`evidence.tx_to == target` — so for every binding-valid case `repeated_selectors` is empty and
-`log_band <= FEW`, while a withdrawal's `value_band` is always `ZERO`. **No honest live
-`CONFIRMED_EXPLOIT` is reachable on this target**, so the attested freeze, the replay control and
-expiry were not exercised live; they remain proven on an EVM by `tests/direct/test_haltable_pool.py`.
-Full hashes, both controls and the argument: `docs/live-run-2026-10-20.md`.
+The gap is structural for `HaltablePool`, not a tuning problem: a transaction to the pool executes
+exactly one function, the pool emits exactly one event per successful call, and the target binding
+requires `evidence.tx_to == target` — so for every binding-valid case `repeated_selectors` is empty
+and `log_band <= FEW`, while a withdrawal's `value_band` is always `ZERO`. **No honest live
+`CONFIRMED_EXPLOIT` is reachable on that target**, and `staged-drain-plain` is the observation. Full
+hashes, both controls and the argument: `docs/live-run-2026-10-20.md`.
+
+A different, deliberately vulnerable contract can produce the shape: `VulnerableDemoPool.claimRewards`
+is payable and emits 12 identical events in one call, so its receipt digests as
+`value=SMALL logs=MANY rep=0x7084f547…` and the attested freeze was exercised live against it
+(`docs/live-run-2026-10-20-confirmed.md`). What the digest still cannot see is the **amounts** or the
+caller's credit. The model confirmed the receipt shape; the claim's numbers were verified off-chain
+by pinned reads, not by the digest.
 
 ### EVM `emit()` does not deliver. Tested 2026-10-02, not assumed.
 
@@ -363,7 +381,7 @@ Full evidence: `state/reviews/2026-10-02-build-review/R1-EMIT-RESULTS.md`.
 
 ### So the last hop is off-chain, and here is the honest cost
 
-The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 206
+The verdict, rationale, evidence, bounded window and self-lifting expiry are all verified — 215
 hermetic tests plus live consensus runs. **Delivery of the freeze to an EVM contract is not**,
 and since 2026-10-17 the contract no longer attempts it: the `emit` calls were **removed** rather
 than left in place, so nothing in the contract can report a delivery that did not happen.
@@ -380,11 +398,16 @@ and apply it:
   removed, so this is history rather than a claim about the current relay.
 - **write path, current:** the attestation-to-freeze path runs end to end on an in-process EVM
   with real signatures and a real signed transaction (`tests/direct/test_relay_attestation.py`),
-  including the assertion that the pool's `frozenUntil` equals the signed deadline exactly. It
-  has **not** been run against a deployed target.
+  including the assertion that the pool's `frozenUntil` equals the signed deadline exactly. It was
+  also run against a deployed target on 2026-10-20: `VulnerableDemoPool` at
+  `0x4d7b0793…1eFaed`, relay tx
+  `0xe78a9cb057709f613148967c6b610732bd3bb1335a0d21cf20fff94f1479ffb1`, `frozenUntil` read back at
+  the relay block equal to the signed deadline `1792488281`. That target is intentionally
+  vulnerable and ours; see `docs/live-run-2026-10-20-confirmed.md`.
 
-Only the composition (verdict observed → relay fires) is unexercised, because no live case has
-reached `CONFIRMED_EXPLOIT` — and none was manufactured.
+The composition (verdict observed → relay fires) is now exercised once, against our own
+deliberately vulnerable testnet pool. No public protocol has been frozen, and no verdict was
+manufactured.
 
 **State the trade plainly.** The attester holds the only key that can authorise a freeze. The relay
 that carries it holds no such key and can choose neither the pool, the verdict nor the deadline:
